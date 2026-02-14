@@ -1,0 +1,166 @@
+      74      send_message(session_key, text)
+      75 +    drain_until_done(session_key, timeout)
+      76 +  end
+      77
+      78 +  defp drain_until_done(session_key, timeout) do
+      79      receive do
+      80 +      {:stream_chunk, ^session_key, _text} ->
+      81 +        drain_until_done(session_key, timeout)
+      82 +
+      83        {:stream_done, ^session_key, full_response} ->
+      84          {:ok, full_response}
+      85
+
+⏺ Now let me also fix the response.content access — the response is a map with string keys from
+  Jason, not atom keys.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Good — the provider uses atom keys %{content: text}. And the session accesses response.content —
+   that's fine with atom keys. Now compile and test.
+
+⏺ Bash(mix compile 2>&1)
+  ⎿  Compiling 1 file (.ex)
+          warning: the following clause will never match:
+     … +18 lines (ctrl+o to expand)
+
+⏺ That warning is because the typechecker sees stream_chat defaults to returning :ok on the happy
+  path. The error branch is fine as defensive code, but let me fix the stream_chat return type to
+  properly indicate it can fail.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ I see the issue — the unless block returns the error but doesn't halt execution. The code
+  continues and tries to proceed even without stream_to. Let me fix this properly.
+
+⏺ Update(lib/beamclaw/provider/anthropic.ex)
+  ⎿  Added 17 lines, removed 17 lines
+      55
+      56    @impl true
+      57    def stream_chat(messages, opts \\ []) do
+      58 -    stream_to = Keyword.get(opts, :stream_to)
+      58 +    case Keyword.get(opts, :stream_to) do
+      59 +      nil ->
+      60 +        {:error, :stream_to_required}
+      61
+      60 -    unless stream_to do
+      61 -      {:error, :stream_to_required}
+      62 -    end
+      62 +      stream_to ->
+      63 +        api_key = get_api_key()
+      64 +        model = Keyword.get(opts, :model) || BeamClaw.Config.get(:default_model)
+      65 +        max_tokens = Keyword.get(opts, :max_tokens) || BeamClaw.Config.get(:defau
+         +lt_max_tokens)
+      66 +        system = Keyword.get(opts, :system)
+      67
+      64 -    api_key = get_api_key()
+      65 -    model = Keyword.get(opts, :model) || BeamClaw.Config.get(:default_model)
+      66 -    max_tokens = Keyword.get(opts, :max_tokens) || BeamClaw.Config.get(:default_m
+         -ax_tokens)
+      67 -    system = Keyword.get(opts, :system)
+      68 +        headers = build_headers(api_key)
+      69 +        body = build_request_body(messages, model, max_tokens, system, true)
+      70
+      69 -    headers = build_headers(api_key)
+      70 -    body = build_request_body(messages, model, max_tokens, system, true)
+      71 +        request = Finch.build(:post, @base_url, headers, Jason.encode!(body))
+      72
+      72 -    request = Finch.build(:post, @base_url, headers, Jason.encode!(body))
+      73 +        # Spawn a task to handle streaming asynchronously
+      74 +        Task.start(fn ->
+      75 +          handle_stream(request, stream_to)
+      76 +        end)
+      77
+      74 -    # Spawn a task to handle streaming asynchronously
+      75 -    Task.start(fn ->
+      76 -      handle_stream(request, stream_to)
+      77 -    end)
+      78 -
+      79 -    :ok
+      78 +        :ok
+      79 +    end
+      80    end
+      81
+      82    # Private helpers
+
+⏺ Bash(mix compile 2>&1)
+  ⎿  Compiling 1 file (.ex)
+     Generated beamclaw app
+
+⏺ Clean compile, no warnings. Now let's do the real integration test — create a session and chat
+  with Claude.
+
+⏺ Bash(mix run -e '
+      {:ok, _pid} = BeamClaw.new_session("test")…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 30s)
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ I see — the Finch.stream/5 callback must NOT return {:cont, acc}. It expects just the
+  accumulator. The {:cont, ...} wrapping is for Finch.stream_while/5 only. Let me fix the
+  streaming callback.
+
+⏺ Update(lib/beamclaw/provider/anthropic.ex)
+  ⎿  Added 2 lines, removed 2 lines
+      128      result =
+      129        Finch.stream(request, BeamClaw.Finch, state, fn
+      130          {:status, status}, acc ->
+      131 -          {:cont, %{acc | status: status}}
+      131 +          %{acc | status: status}
+      132
+      133          {:headers, _headers}, acc ->
+      134 -          {:cont, acc}
+      134 +          acc
+      135
+      136          {:data, data}, acc ->
+      137            handle_stream_chunk(data, acc)
+
+⏺ And fix handle_stream_chunk to return just the state (not {:cont, state}):
+
+⏺ Update(lib/beamclaw/provider/anthropic.ex)
+  ⎿  Added 3 lines, removed 6 lines
+      153    defp handle_stream_chunk(data, state) do
+      154      {events, remaining_buffer} = SSE.parse(data, state.buffer)
+      155
+      156 -    new_state =
+      157 -      Enum.reduce(events, %{state | buffer: remaining_buffer}, fn event, acc ->
+      158 -        process_sse_event(event, acc)
+      159 -      end)
+      160 -
+      161 -    {:cont, new_state}
+      156 +    Enum.reduce(events, %{state | buffer: remaining_buffer}, fn event, acc ->
+      157 +      process_sse_event(event, acc)
+      158 +    end)
+      159    end
+      160
+      161    defp process_sse_event(%{event: event_type, data: data_string}, state) do
+
+⏺ Bash(mix compile 2>&1 && mix run -e '
+      {:ok, _pid} = BeamClaw.new_session("test")…)
+  ⎿  Compiling 1 file (.ex)
+     Generated beamclaw app
+     20:09:57.975 [info] BeamClaw.Config initialized with keys: [:default_model, :default_max
+     … +6 lines (ctrl+o to expand)
+  ⎿  (timeout 30s)
+
+⏺ It works! The session created, sent "What is 2+2?", got "4" streaming back, and history has 3
+  messages (must be a leftover from the failed run). Let me clean that and do a fresh test with
+  multi-turn.
+
+⏺ Bash(rm -f ~/.config/beamclaw/data/sessions/*.jsonl && mix run -e '
+      {:ok, _} = BeamClaw.new_session("demo")…)
+  ⎿  20:10:07.763 [info] BeamClaw.Config initialized with keys: [:default_model,
+     :default_max_tokens, :data_dir, :anthropic_api_key]
+     20:10:07.828 [info] Session started: agent:default:demo
+     (2s · timeout 1m)
+     ctrl+b ctrl+b (twice) to run in background
+
+✳ Contemplating… (10m 25s · 3.6k tokens · thinking)
+
+──────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────
+  @main @session-engineer · shift+↑ to expand
+  ⏵⏵ bypass permissions on · 1 teammate · esc to interrupt · ctrl+t to show tasks
+
