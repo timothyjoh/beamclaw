@@ -108,14 +108,11 @@ defmodule BeamClaw.Tool.Exec do
     duration = System.monotonic_time() - start_time
 
     case result do
-      {:ok, %{exit_code: code}} when code == 0 ->
+      {:ok, %{exit_code: code}} ->
         BeamClaw.Telemetry.emit_tool_execute_stop(%{duration: duration}, Map.put(metadata, :exit_code, code))
 
       {:ok, %{backgrounded: true}} ->
         BeamClaw.Telemetry.emit_tool_execute_stop(%{duration: duration}, Map.put(metadata, :backgrounded, true))
-
-      {:ok, %{exit_code: code}} ->
-        BeamClaw.Telemetry.emit_tool_execute_exception(%{duration: duration}, Map.put(metadata, :exit_code, code))
 
       {:error, _reason} ->
         BeamClaw.Telemetry.emit_tool_execute_exception(%{duration: duration}, metadata)

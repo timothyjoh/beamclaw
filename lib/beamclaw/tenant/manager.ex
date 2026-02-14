@@ -94,6 +94,9 @@ defmodule BeamClaw.Tenant.Manager do
           # Register tenant in BeamClaw.Registry
           Registry.register(BeamClaw.Registry, {:tenant, tenant_id}, tenant)
 
+          # Emit telemetry event
+          BeamClaw.Telemetry.emit_tenant_create(%{tenant_id: tenant_id, tenant_name: tenant.name})
+
           new_state = Map.put(state, tenant_id, tenant)
           {:reply, {:ok, tenant}, new_state}
 
@@ -126,6 +129,9 @@ defmodule BeamClaw.Tenant.Manager do
 
         # Unregister from BeamClaw.Registry
         Registry.unregister(BeamClaw.Registry, {:tenant, tenant_id})
+
+        # Emit telemetry event
+        BeamClaw.Telemetry.emit_tenant_delete(%{tenant_id: tenant_id, tenant_name: tenant.name})
 
         new_state = Map.delete(state, tenant_id)
         {:reply, :ok, new_state}
