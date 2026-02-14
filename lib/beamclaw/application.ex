@@ -22,8 +22,20 @@ defmodule BeamClaw.Application do
       # Runtime configuration GenServer
       BeamClaw.Config,
 
+      # Background process tracking for Tool.Exec
+      BeamClaw.BackgroundProcessRegistry,
+
+      # Task supervisor for tool execution
+      {Task.Supervisor, name: BeamClaw.ToolSupervisor},
+
       # DynamicSupervisor for session GenServers
       {DynamicSupervisor, name: BeamClaw.SessionSupervisor, strategy: :one_for_one},
+
+      # DynamicSupervisor for channel GenServers
+      {DynamicSupervisor, name: BeamClaw.ChannelSupervisor, strategy: :one_for_one},
+
+      # DynamicSupervisor for cron workers
+      {DynamicSupervisor, name: BeamClaw.CronSupervisor, strategy: :one_for_one},
 
       # Phoenix endpoint (must be last)
       BeamClaw.Gateway.Endpoint

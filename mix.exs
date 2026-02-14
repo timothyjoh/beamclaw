@@ -32,6 +32,8 @@ defmodule BeamClaw.MixProject do
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.5", only: :dev},
       {:bandit, "~> 1.5"},
+      {:nostrum, "~> 0.10", runtime: Mix.env() != :test},
+      {:crontab, "~> 1.1"},
       {:heroicons,
        github: "tailwindlabs/heroicons",
        tag: "v2.1.1",
