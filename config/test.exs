@@ -12,3 +12,6 @@ config :beamclaw, BeamClaw.Gateway.Endpoint,
 config :nostrum,
   token: "Bot test_token_for_testing_only",
   num_shards: :auto
+
+# Disable clustering in test
+config :beamclaw, :cluster_topologies, []

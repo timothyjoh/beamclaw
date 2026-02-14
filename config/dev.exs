@@ -17,3 +17,10 @@ config :beamclaw, BeamClaw.Gateway.Endpoint,
       ~r"lib/beamclaw/gateway/.*(ex|heex)$"
     ]
   ]
+
+# Cluster configuration - Gossip strategy for local development
+config :beamclaw, :cluster_topologies, [
+  gossip: [
+    strategy: Cluster.Strategy.Gossip
+  ]
+]

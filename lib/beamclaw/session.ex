@@ -33,6 +33,7 @@ defmodule BeamClaw.Session do
     :agent_id,
     :session_id,
     :caller,
+    :start_time,
     messages: [],
     metadata: %{},
     status: :idle,
@@ -123,13 +124,21 @@ defmodule BeamClaw.Session do
       status: :idle,
       parent_session: Keyword.get(opts, :parent_session, nil),
       sub_agents: [],
-      monitors: []
+      monitors: [],
+      start_time: System.monotonic_time()
     }
 
     # Load existing messages from JSONL if available
     loaded_messages = Store.load_messages(session_key)
 
     state = %{state | messages: loaded_messages}
+
+    # Emit telemetry event
+    BeamClaw.Telemetry.emit_session_start(%{
+      session_key: session_key,
+      agent_id: agent_id,
+      session_id: session_id
+    })
 
     Logger.info("Session started: #{session_key}")
     {:ok, state}
@@ -300,6 +309,17 @@ defmodule BeamClaw.Session do
 
   @impl true
   def terminate(_reason, state) do
+    # Calculate duration
+    duration = System.monotonic_time() - (state.start_time || System.monotonic_time())
+
+    # Emit telemetry event
+    BeamClaw.Telemetry.emit_session_stop(%{
+      session_key: state.session_key,
+      agent_id: state.agent_id,
+      session_id: state.session_id,
+      duration: duration
+    })
+
     # Clean up tool registry entries for this session
     BeamClaw.Tool.Registry.unregister_all(state.session_key)
     :ok

@@ -1,6 +1,7 @@
 defmodule BeamClaw.Gateway.Router do
   use Phoenix.Router
   import Phoenix.LiveView.Router
+  import Phoenix.LiveDashboard.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -18,6 +19,7 @@ defmodule BeamClaw.Gateway.Router do
   scope "/", BeamClaw.Gateway do
     pipe_through :browser
     live "/", DashboardLive
+    live_dashboard "/dashboard", metrics: BeamClaw.Telemetry
   end
 
   scope "/v1", BeamClaw.Gateway do

@@ -376,8 +376,13 @@ defmodule BeamClaw.Cron.Worker do
     updated_job = %{job | running_at_ms: now_ms}
     jobs = Map.put(state.jobs, job_id, updated_job)
 
+    # Emit telemetry start event
+    metadata = %{agent_id: state.agent_id, job_id: job_id, job_type: job.type}
+    BeamClaw.Telemetry.emit_cron_job_start(metadata)
+
     # Spawn async execution
     parent = self()
+    start_time = System.monotonic_time()
 
     Task.start(fn ->
       try do
@@ -388,8 +393,15 @@ defmodule BeamClaw.Cron.Worker do
           :isolated ->
             execute_isolated_job(state.agent_id, job, parent, job_id)
         end
+
+        # Emit telemetry stop event on success
+        duration = System.monotonic_time() - start_time
+        BeamClaw.Telemetry.emit_cron_job_stop(%{duration: duration}, metadata)
       rescue
         error ->
+          # Emit telemetry exception event on error
+          duration = System.monotonic_time() - start_time
+          BeamClaw.Telemetry.emit_cron_job_exception(%{duration: duration}, Map.put(metadata, :error, inspect(error)))
           send(parent, {:job_error, job_id, error})
       end
     end)

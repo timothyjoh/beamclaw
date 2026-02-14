@@ -54,6 +54,11 @@ defmodule BeamClaw.Tool.Exec do
     env = Keyword.get(opts, :env, %{})
     security_mode = Keyword.get(opts, :security_mode, :gateway)
 
+    # Emit telemetry start event
+    start_time = System.monotonic_time()
+    metadata = %{command: command, security_mode: security_mode}
+    BeamClaw.Telemetry.emit_tool_execute_start(metadata)
+
     # Sanitize environment variables based on security mode
     sanitized_env = sanitize_env(env, security_mode)
 
@@ -71,30 +76,52 @@ defmodule BeamClaw.Tool.Exec do
 
     port_opts = if sanitized_env != [], do: port_opts ++ [env: sanitized_env], else: port_opts
 
-    # Open the port
-    port = Port.open({:spawn_executable, String.to_charlist(shell)}, port_opts)
+    result =
+      try do
+        # Open the port
+        port = Port.open({:spawn_executable, String.to_charlist(shell)}, port_opts)
 
-    # Get OS PID
-    os_pid = get_os_pid(port)
+        # Get OS PID
+        os_pid = get_os_pid(port)
 
-    # Collect output with yield timeout
-    case collect_output(port, os_pid, command, @yield_timeout) do
-      {:completed, output, exit_code} ->
-        {:ok, %{output: truncate_output(output), exit_code: exit_code}}
+        # Collect output with yield timeout
+        case collect_output(port, os_pid, command, @yield_timeout) do
+          {:completed, output, exit_code} ->
+            {:ok, %{output: truncate_output(output), exit_code: exit_code}}
 
-      {:timeout, partial_output} ->
-        # Background the process
-        slug = generate_slug()
-        BackgroundProcessRegistry.register(slug, port, os_pid, command)
+          {:timeout, partial_output} ->
+            # Background the process
+            slug = generate_slug()
+            BackgroundProcessRegistry.register(slug, port, os_pid, command)
 
-        # Start monitoring task to collect remaining output
-        start_background_monitor(slug, port)
+            # Start monitoring task to collect remaining output
+            start_background_monitor(slug, port)
 
-        {:ok, %{output: truncate_output(partial_output), backgrounded: true, slug: slug}}
+            {:ok, %{output: truncate_output(partial_output), backgrounded: true, slug: slug}}
+        end
+      rescue
+        e ->
+          {:error, "#{Exception.message(e)} - #{inspect(__STACKTRACE__)}"}
+      end
+
+    # Emit telemetry stop/exception event
+    duration = System.monotonic_time() - start_time
+
+    case result do
+      {:ok, %{exit_code: code}} when code == 0 ->
+        BeamClaw.Telemetry.emit_tool_execute_stop(%{duration: duration}, Map.put(metadata, :exit_code, code))
+
+      {:ok, %{backgrounded: true}} ->
+        BeamClaw.Telemetry.emit_tool_execute_stop(%{duration: duration}, Map.put(metadata, :backgrounded, true))
+
+      {:ok, %{exit_code: code}} ->
+        BeamClaw.Telemetry.emit_tool_execute_exception(%{duration: duration}, Map.put(metadata, :exit_code, code))
+
+      {:error, _reason} ->
+        BeamClaw.Telemetry.emit_tool_execute_exception(%{duration: duration}, metadata)
     end
-  rescue
-    e ->
-      {:error, "#{Exception.message(e)} - #{inspect(__STACKTRACE__)}"}
+
+    result
   end
 
   ## Private Functions

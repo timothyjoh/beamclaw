@@ -41,16 +41,35 @@ defmodule BeamClaw.Provider.Anthropic do
     request =
       Finch.build(:post, @base_url, headers, Jason.encode!(body))
 
-    case Finch.request(request, BeamClaw.Finch) do
-      {:ok, %{status: 200, body: response_body}} ->
-        parse_response(response_body)
+    # Emit telemetry start event
+    start_time = System.monotonic_time()
+    metadata = %{model: model, max_tokens: max_tokens}
+    BeamClaw.Telemetry.emit_provider_request_start(metadata)
 
-      {:ok, %{status: status, body: error_body}} ->
-        {:error, {:http_error, status, error_body}}
+    result =
+      case Finch.request(request, BeamClaw.Finch) do
+        {:ok, %{status: 200, body: response_body}} ->
+          parse_response(response_body)
 
-      {:error, reason} ->
-        {:error, {:request_failed, reason}}
+        {:ok, %{status: status, body: error_body}} ->
+          {:error, {:http_error, status, error_body}}
+
+        {:error, reason} ->
+          {:error, {:request_failed, reason}}
+      end
+
+    # Emit telemetry stop/exception event
+    duration = System.monotonic_time() - start_time
+
+    case result do
+      {:ok, _response} ->
+        BeamClaw.Telemetry.emit_provider_request_stop(%{duration: duration}, metadata)
+
+      {:error, _reason} ->
+        BeamClaw.Telemetry.emit_provider_request_exception(%{duration: duration}, metadata)
     end
+
+    result
   end
 
   @impl true
@@ -117,12 +136,18 @@ defmodule BeamClaw.Provider.Anthropic do
   end
 
   defp handle_stream(request, stream_to) do
+    start_time = System.monotonic_time()
+    metadata = %{stream: true}
+    BeamClaw.Telemetry.emit_provider_request_start(metadata)
+
     state = %{
       stream_to: stream_to,
       buffer: "",
       status: nil,
       accumulated_text: "",
-      usage: nil
+      usage: nil,
+      start_time: start_time,
+      metadata: metadata
     }
 
     result =
@@ -139,13 +164,19 @@ defmodule BeamClaw.Provider.Anthropic do
 
     case result do
       {:ok, final_state} ->
+        duration = System.monotonic_time() - start_time
+
         if final_state.status == 200 do
+          BeamClaw.Telemetry.emit_provider_request_stop(%{duration: duration}, metadata)
           send_stream_done(stream_to, final_state.accumulated_text, final_state.usage)
         else
+          BeamClaw.Telemetry.emit_provider_request_exception(%{duration: duration}, metadata)
           send(stream_to, {:stream_error, {:http_error, final_state.status}})
         end
 
       {:error, reason} ->
+        duration = System.monotonic_time() - start_time
+        BeamClaw.Telemetry.emit_provider_request_exception(%{duration: duration}, metadata)
         send(stream_to, {:stream_error, reason})
     end
   end

@@ -10,6 +10,16 @@ defmodule BeamClaw.Application do
     BeamClaw.Tool.Approval.init()
     BeamClaw.Tool.Registry.init()
 
+    # Determine cluster children based on configuration
+    cluster_children =
+      case Application.get_env(:beamclaw, :cluster_topologies) do
+        topologies when is_list(topologies) and topologies != [] ->
+          [{Cluster.Supervisor, [topologies, [name: BeamClaw.ClusterSupervisor]]}]
+
+        _ ->
+          []
+      end
+
     children = [
       # Process registry for {:session, id}, {:channel, id}, {:cron, agent_id}
       {Registry, keys: :unique, name: BeamClaw.Registry},
@@ -24,6 +34,9 @@ defmodule BeamClaw.Application do
       # PubSub for WebSocket broadcasts
       {Phoenix.PubSub, name: BeamClaw.PubSub},
 
+      # :pg scope for distributed process groups
+      %{id: :pg, start: {:pg, :start_link, [:beamclaw]}}
+    ] ++ cluster_children ++ [
       # Runtime configuration GenServer
       BeamClaw.Config,
 
@@ -41,6 +54,15 @@ defmodule BeamClaw.Application do
 
       # DynamicSupervisor for cron workers
       {DynamicSupervisor, name: BeamClaw.CronSupervisor, strategy: :one_for_one},
+
+      # DynamicSupervisor for tenant supervisors (multi-tenant support)
+      {DynamicSupervisor, name: BeamClaw.TenantSupervisor, strategy: :one_for_one},
+
+      # Tenant lifecycle manager
+      BeamClaw.Tenant.Manager,
+
+      # Telemetry supervisor
+      BeamClaw.Telemetry,
 
       # Phoenix endpoint (must be last)
       BeamClaw.Gateway.Endpoint
