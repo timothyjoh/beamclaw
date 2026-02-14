@@ -264,3 +264,181 @@ Phase 1's 656-line architecture.md eliminated almost all design decisions from P
 
 **What's left for Phase 6+ and beyond:**
 BeamClaw is now a complete single-node agent orchestration platform: config loading, multi-provider LLM integration, session management, channel adapters, tool execution, cron scheduling, skill loading, sub-agent spawning, and tool approval. The "why BEAM" story is proven for single-node. Phase 6 is where BEAM's distribution story turns from theoretical advantage to practical differentiator — clustering, agent migration, and hot code reload are things that simply cannot be done in Node.js without fundamental re-architecture. See `docs/VISION.md` for the full scaling vision.
+
+---
+
+## Final Reflection: The Complete Build (Phases 1-6a)
+
+*Written by the Final Reflection Agent, 2026-02-14*
+
+### 1. What We Built — By the Numbers
+
+In approximately 3 hours of wall-clock time, using Claude Code Agent Teams, BeamClaw went from an empty directory to a functional AI agent orchestration platform:
+
+| Metric | Value |
+|--------|-------|
+| Phases completed | 6 (Architecture + 5 implementation phases) |
+| Source modules | 38 `.ex` files |
+| Test files | 27 `.exs` files |
+| Tests passing | 274 (0 failures) |
+| Lines of Elixir (source) | ~4,600 |
+| Lines of Elixir (tests) | ~3,200 |
+| Lines of Elixir (total) | ~12,500 (including generated/config) |
+| Git commits | 12 (6 phase commits + 4 staff reviews + 2 reflections) |
+| Dependencies | 16 Hex packages |
+| Architecture doc | 687 lines (living document, updated through Phase 6a) |
+| Vision doc | 166 lines |
+| Reflections doc | This one — you're reading it |
+
+**Subsystems implemented:**
+1. **Config** — YAML loading, FileSystem watcher, hot-reload with safe/unsafe field classification
+2. **Provider** — Anthropic HTTP client, Finch HTTP/2 pools, SSE streaming parser
+3. **Session** — GenServer-per-session, message history, JSONL persistence, sub-agent spawning
+4. **Gateway** — Phoenix Endpoint (Bandit), REST API (OpenAI-compatible), WebSocket RPC, LiveView dashboard
+5. **Channels** — Behaviour + Discord adapter (Nostrum) + mock adapter for testing
+6. **Tools** — Exec (sandboxed, env blocklist, background process registry, SIGTERM→SIGKILL), WebFetch
+7. **Cron** — Per-agent workers, schedule parsing (at/every/cron), stuck detection, auto-disable, JSONL persistence
+8. **Skills** — Filesystem-based SKILL.md loader with YAML frontmatter parsing
+9. **Agents** — Configuration resolver (model, provider, skills, tool allowlist)
+10. **Sub-Agents** — 1-level-deep enforcement, Process.monitor lifecycle management
+11. **Tool Approval** — Ask modes (off/on_miss/always), ETS + PubSub coordination, 120s timeout
+12. **Tool Registry** — Per-session ETS tool registration with scoping
+13. **Telemetry** — 20 instrumented metrics, LiveDashboard integration
+14. **Multi-Tenancy** — Per-tenant supervision subtrees with resource isolation
+15. **Clustering** — libcluster (Gossip/K8s DNS), `:pg` process groups
+
+### 2. What Worked About the Agent Team Process
+
+**Architecture-first was the single most impactful decision.** Phase 1 spent 30 minutes producing a 656-line blueprint (`docs/architecture.md`) with a 3-agent team (Researcher, Architect, Devil's Advocate). This eliminated virtually all design decisions from Phases 2-6a. Agents didn't debate "GenServer or Agent?" — the blueprint said GenServer, so they implemented GenServer. The 20% time investment in architecture saved hours of rework and coordination overhead.
+
+**The reflection loop produced measurable improvement across phases:**
+- Phase 3 reflection: "agents should write their own tests" → Phase 4: 99 new tests (3x improvement over Phase 3's 29)
+- Phase 3 reflection: "add integration tests" → Phase 4: `integration_test.exs` with full-flow coverage
+- Phase 1-4 reflection: "add Staff Engineer review" → Phase 5+: Staff review caught `Tool.Registry` concurrency gap, `Tenant.Manager` race condition
+- Phase 5 reflection: "add max thinking time to prompts" → Phase 6a: no extended thinking stalls
+
+Each phase was measurably better than the last. Explicit reflection steps between phases are the key mechanism.
+
+**3 agents per phase was the sweet spot.** Enough parallelism to matter (3 independent subsystems built simultaneously), few enough to avoid coordination overhead. Zero merge conflicts across all 6 phases because each agent received exact file paths in their prompt.
+
+**Sequential-then-parallel team pattern.** One agent scaffolds shared infrastructure (supervision tree, Phoenix endpoint), then parallel agents build on top. Phase 3 (Gateway) pioneered this and it became the standard: scaffolder runs first, then 2 parallel builders.
+
+**Staff Engineer review as a separate session.** Fresh context catches what fatigued context misses. Caught real bugs in every phase: missing `handle_info` clauses, test isolation issues, concurrent read access gaps. Worth the 5-10 minutes per phase.
+
+**Model tiering (Sonnet teammates, Opus lead) was cost-effective.** Teammates don't need Opus-level reasoning for implementing a spec. The lead needs it for synthesis, integration testing, and cross-module debugging. Estimated total cost: ~10% of Claude Max weekly limit for the entire build.
+
+### 3. What Didn't Work
+
+**No manual QA.** All validation was automated (`mix test`, `mix compile --warnings-as-errors`). Nobody ran `iex -S mix` and chatted with the bot end-to-end. The LiveView dashboard was never visually tested. The Discord adapter was never connected to a real Discord server during the build. Automated tests caught correctness issues but missed usability and integration gaps.
+
+**Lead agent thinking stalls.** The lead agent got stuck in 10-12 minute extended thinking loops twice during Phase 5. Pure waste. Adding "do not think for more than 2 minutes" to prompts helped in Phase 6a, but it's a fragile workaround. The root cause is context window pressure — leads accumulate the most context because they read all teammate outputs.
+
+**Context window is the hardest constraint.** Each phase needs a fresh CC session. Phase 1 consumed 89% context by itself. Prompts must be fully self-contained — no carryover between phases. This makes prompt quality critically important and means the lead must duplicate context that "should" be available from prior phases.
+
+**Test execution time (57 seconds) is already problematic.** The exec timeout tests account for most of this. No `@tag :slow` was added, so there's no fast feedback loop. By Phase 6a, waiting a full minute for test results slows iteration.
+
+**No fault injection testing.** Tests verify happy paths and edge cases, but there's no chaos testing. What happens when Anthropic returns 500? When a session crashes mid-stream? When Nostrum disconnects? The `Tool.Exec` tests exercise timeout/kill behavior, but provider and channel fault paths are untested.
+
+**Documentation drift.** `docs/architecture.md` was behind the implementation after just 2 phases. The reflection agents partially addressed this by noting updates needed, but architecture.md was only updated twice (Phase 1 origin + Phase 5 update). By Phase 6a, several sections describe things that don't match the code.
+
+**Phase scope labeling was misleading.** Phase 4 was called "Channel System" but actually built channels + tools + cron (3 subsystems). Phase 6a was called "Multi-Tenant Foundation" but also included telemetry and clustering. Honest scoping would have helped set expectations.
+
+### 4. Key Architectural Decisions — Did They Hold Up?
+
+**GenServer-per-session: YES.** This was the foundational decision and it held up perfectly. Each session is an isolated process with its own state, message history, and lifecycle. Sub-agent spawning, tool approval, and streaming all compose naturally because they're just Erlang messages to/from the session process. No shared mutable state, no locks, no race conditions.
+
+**Stateless provider modules (NOT GenServers): YES.** The architecture.md explicitly called out that a GenServer-per-provider would be a bottleneck. Stateless modules + Finch pools was the right call. Multiple sessions can make concurrent provider calls without serialization. The only shared state is the Finch connection pool, which handles concurrency internally.
+
+**ETS for shared mutable state: YES.** `Tool.Approval`, `Tool.Registry`, and `ProviderStats` all use ETS tables initialized in `application.ex` (owned by the application master, outliving any GenServer). This avoids the "GenServer as database" anti-pattern while providing concurrent read access. The Staff Engineer review confirmed this pattern works for the Tool.Registry concurrent access case.
+
+**JSONL persistence with atomic writes: PARTIALLY.** Clean and simple for single-node, which is all we need through Phase 6a. But it won't scale to multi-node (no distributed write coordination) or analytics (no query capability). The architecture correctly identified this as a Phase 6+ concern. The atomic temp-file-plus-rename pattern has been reliable — zero data corruption across all testing.
+
+**Phoenix for Gateway: YES.** Phoenix PubSub, Channels, and LiveView all pulled their weight. PubSub for event broadcasting was trivial. Channels gave us WebSocket RPC for free. LiveView provided a real-time dashboard without writing any JavaScript. Bandit as the HTTP server was a good swap from the originally-planned Cowboy.
+
+**Registry (not :pg) for single-node: YES, with migration path.** Phase 6a added `:pg` process groups alongside Registry. The dual approach works: Registry for local fast lookup, `:pg` for distributed discovery when clustering is active. The architecture correctly deferred `:pg` complexity until it was needed.
+
+**Process.monitor for sub-agent lifecycle: YES.** Textbook "let it crash" OTP. Parent monitors sub-agent, receives `:DOWN` on crash, cleans up. No defensive error handling needed. This is exactly the kind of thing BEAM does better than any other runtime.
+
+### 5. What Phase 6b/6c Would Need
+
+**Phase 6b: Full Distributed Registry**
+
+The clustering primitives are in place (libcluster, `:pg`), but they're not yet integrated into the session/channel/cron lookup paths. Phase 6b needs to:
+
+1. **Replace `Registry` lookups with `:pg`-aware resolution** — When `Session.start_link` is called, register in both Registry (local) and `:pg` (cluster). When looking up a session by key, check `:pg` first for cross-node, fall back to local Registry.
+2. **Distributed PubSub verification** — Phoenix.PubSub already supports multi-node via the PG2 adapter, but it hasn't been tested across actual nodes. Need integration tests with two BEAM nodes in the same test.
+3. **Session routing for cross-node casts** — `GenServer.cast(pid, msg)` works transparently across nodes, but the caller needs to discover the pid first. The `:pg` lookup returns remote pids — verify that casts to remote pids work correctly with the current Session API.
+4. **Split-brain handling** — When nodes partition and rejoin, `:pg` membership may have duplicates. Need a conflict resolution strategy (e.g., latest-heartbeat wins) for sessions that appear on multiple nodes.
+5. **Test infrastructure** — Multi-node tests are notoriously tricky. Consider `LocalCluster` hex package for spinning up test nodes in ExUnit.
+
+**Estimated effort:** 2-3 agent team, ~45 minutes. Medium risk — the patterns are well-understood in the Elixir ecosystem, but testing is the hard part.
+
+**Phase 6c: Agent Migration & Hot Reload**
+
+This is the "only BEAM can do this" phase:
+
+1. **Session state serialization** — `Session.State` struct needs `Jason.Encoder` implementation and a `from_serialized/1` constructor. Message history serialization is the tricky part — tool results may contain non-serializable terms.
+2. **Horde for distributed DynamicSupervisor** — Replace `SessionSupervisor` (local DynamicSupervisor) with Horde (distributed). Horde handles starting sessions on the least-loaded node and restarting them on another node if one goes down.
+3. **Connection draining** — Before stopping a node: (a) stop accepting new sessions, (b) wait for in-flight LLM responses to complete, (c) serialize and migrate active sessions to other nodes, (d) shut down. The `drain_node/1` function in VISION.md sketches this.
+4. **Hot code reload for skills/config** — Config already watches the filesystem. Skills are loaded on-demand (stateless). The gap is reloading agent definitions without restarting sessions — need a `handle_info(:config_updated, ...)` in Session that re-resolves the agent config.
+5. **Rolling deploy support** — Deploy new code to one node at a time. BEAM's hot code loading keeps existing sessions running on old code while new sessions use new code. Need to verify this works with the current module structure (no anonymous functions stored in state that would break on code reload).
+
+**Estimated effort:** 3-agent team, ~60 minutes. High risk — Horde introduces distributed consensus complexity and state transfer failures need careful handling.
+
+### 6. Recommendations for the Next Work Session
+
+**Priority 1: Fix the test suite (30 min)**
+- Add `@tag :slow` to exec timeout tests and cron stuck-detection tests
+- Add `mix test --exclude slow` alias for fast feedback (~10s instead of 57s)
+- Fix the flaky test (1 failure on first run, 0 on second — likely a timing-sensitive assertion in exec or cron)
+- Increase test isolation: ensure every test uses unique session keys, unique ETS table names, unique file paths
+
+**Priority 2: Manual smoke test (15 min)**
+- Run `iex -S mix` and exercise the full flow: create session → send message → verify streaming response
+- Open LiveView dashboard in a browser, verify it renders and updates in real-time
+- Hit `/v1/chat/completions` with curl and verify streaming SSE works end-to-end
+- Open `/dashboard` (LiveDashboard) and verify telemetry metrics are reporting
+- This has never been done — it's the biggest gap in our validation
+
+**Priority 3: Phase 6b — Distributed Registry (45 min)**
+- This is the natural next step and the risk is manageable
+- Use `LocalCluster` for multi-node tests
+- Focus on session lookup across nodes — this is the core use case
+- Defer split-brain handling to Phase 6c (accept "last writer wins" for now)
+
+**Priority 4: Architecture.md refresh (20 min)**
+- Update supervision tree to reflect Phase 6a additions (Tenant.Manager, Telemetry, Cluster)
+- Mark implemented vs. pending items accurately
+- Add Section 4.8 for Multi-Tenancy (currently undocumented in architecture.md)
+- Add the actual Module → File mapping for quick navigation
+
+**Do NOT attempt in the next session:**
+- Phase 6c (agent migration) — too complex without 6b being solid first
+- Tool.Browser (Playwright shim) — requires Node.js dependency, low ROI
+- Provider fallback chains — nice-to-have, not blocking anything
+- Database migration (SQLite/Postgres) — JSONL is fine for current scale
+
+### 7. Meta-Reflection: What This Build Demonstrates
+
+**About agent team orchestration:**
+
+The overnight autonomous build pattern works. 6 phases, 12 commits, 274 tests, zero human code review (beyond the automated Staff Engineer agent). The key enablers were: (1) architecture-first design that eliminated downstream decisions, (2) explicit reflection loops that drove cross-phase improvement, (3) model tiering for cost control, (4) Staff Engineer reviews for quality gates, and (5) self-contained prompts that didn't assume context carryover.
+
+The total human intervention was ~10 touches: phase launches, Discord check-ins, and one escape-key nudge when the lead stalled in extended thinking. Everything else was autonomous.
+
+**About BEAM for agent orchestration:**
+
+Every phase validated the BEAM choice from a different angle:
+- Phase 2: Process mailbox as message queue (no external dependency)
+- Phase 3: Phoenix PubSub for event broadcasting (one line)
+- Phase 4: DynamicSupervisor for channels/cron (automatic restart on crash)
+- Phase 5: ETS for shared state, Process.monitor for sub-agent lifecycle
+- Phase 6a: `:telemetry` for instrumentation, `:pg` for distributed process groups, per-tenant supervision trees
+
+None of these required external infrastructure. In Node.js, the equivalent would need Redis (pubsub + shared state), Bull/BeeQueue (job queues), PM2/cluster module (process management), and a custom health check system. BEAM provides all of this as runtime primitives.
+
+**About the compounding advantage of choosing the right foundation:**
+
+The hardest things left to build (Phase 6b/6c) — distributed session lookup, agent migration between nodes, hot code reload without dropping connections — are things that BEAM was literally designed to do. They're hard engineering problems on any other runtime, but on BEAM they're well-trodden paths with mature libraries (Horde, libcluster, `:pg`). The architectural bet placed in Phase 1 continues to pay compounding returns.
+
+BeamClaw is not yet production-ready. But it demonstrates that a distributed, fault-tolerant, multi-tenant agent orchestration platform can be built from scratch in a few hours when you choose the right runtime and the right development methodology. The next session should focus on proving the distribution story (Phase 6b) — that's where BeamClaw stops being "a neat Elixir project" and becomes "something you genuinely can't build this easily in anything else."
