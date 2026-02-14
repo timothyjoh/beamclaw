@@ -1,6 +1,6 @@
 # BeamClaw Architecture — BEAM/OTP Technical Blueprint
 
-**Status:** LIVING DOCUMENT — Phase 1 origin, updated through Phase 4
+**Status:** LIVING DOCUMENT — Phase 1 origin, updated through Phase 5
 **Date:** 2026-02-14
 **Authors:** Phase 1 Agent Team (Researcher, Architect, Devil's Advocate, Team Lead)
 
@@ -105,13 +105,13 @@ BeamClaw.Application (Supervisor, strategy: :one_for_one)
 ├── BeamClaw.CronSupervisor (DynamicSupervisor)                      ✅ Phase 4
 │   Per-agent Cron.Worker GenServers (:transient)
 │
-├── BeamClaw.ProviderStats (GenServer)                                ⏳ Phase 5
+├── BeamClaw.ProviderStats (GenServer)                                ⏳ Phase 6a
 │   ETS table owner for usage tracking (requests, tokens, cost per provider/day)
 │
-├── BeamClaw.NodeRegistry (GenServer)                                 ⏳ Phase 5
+├── BeamClaw.NodeRegistry (GenServer)                                 ⏳ Phase 6b
 │   Device pairing, authentication, presence tracking
 │
-├── BeamClaw.HeartbeatRunner (GenServer)                              ⏳ Phase 5
+├── BeamClaw.HeartbeatRunner (GenServer)                              ⏳ Phase 6a
 │   Periodic health checks, presence broadcasting
 │
 └── BeamClaw.Gateway.Endpoint (Phoenix.Endpoint)                     ✅ Phase 3
@@ -124,10 +124,12 @@ BeamClaw.Application (Supervisor, strategy: :one_for_one)
             Custom JSON-RPC protocol: hello → request/response → events
 ```
 
-> **Implementation note (Phase 4):** The actual startup order in `application.ex` is:
+> **Implementation note (Phase 5):** The actual startup order in `application.ex` is:
+> `Tool.Approval.init()` + `Tool.Registry.init()` (ETS tables) →
 > Registry → Finch → PubSub → Config → BackgroundProcessRegistry → ToolSupervisor →
 > SessionSupervisor → ChannelSupervisor → CronSupervisor → Endpoint.
-> Items marked ⏳ are designed but not yet implemented.
+> ETS tables for Tool.Approval and Tool.Registry are initialized before the supervisor
+> starts so they outlive any individual GenServer. Items marked ⏳ are designed but not yet implemented.
 
 **Shutdown ordering** (reverse startup): Gateway → Heartbeat → Cron → Channels → Sessions → Tools → BackgroundProcessRegistry → NodeRegistry → Config → Finch → PubSub → Registry. Mirrors OpenClaw's orderly shutdown.
 
@@ -190,7 +192,7 @@ end
 
 **Key insight (original design):** Sessions are lightweight metadata holders. Message history lives in the agent runtime process, not the session store.
 
-> **Implementation note (Phase 2):** The actual Session GenServer holds `messages: []` (full message history) in its state for simplicity. This is the right tradeoff for single-node Phases 2–5. Message history offloading (to ETS, SQLite, or Postgres) is a Phase 6 concern when state size or distribution becomes relevant. The Session state struct also does not yet include `sub_agents`, `monitors`, or `parent_session` — these will be added in Phase 5 with Tool.SessionSpawn.
+> **Implementation note (Phase 2, updated Phase 5):** The actual Session GenServer holds `messages: []` (full message history) in its state for simplicity. This is the right tradeoff for single-node Phases 2–5. Message history offloading (to ETS, SQLite, or Postgres) is a Phase 6 concern when state size or distribution becomes relevant. As of Phase 5, the Session state includes `sub_agents`, `monitors`, and `parent_session` fields, implemented via `BeamClaw.Session.SubAgent`.
 
 **State:**
 
@@ -380,7 +382,24 @@ end
 
 **PTY Support:** Erlang ports with `:pty` option for interactive shells. **Known limitation:** `Port.close/1` sends SIGHUP, not SIGTERM. Mitigation: use `System.cmd("kill", ...)` for signal control, or `MuonTrap` for managed child processes.
 
-### 4.5 Channels
+### 4.5 Agent Intelligence Layer (Phase 5)                           ✅ Phase 5
+
+**Skill Loading** (`BeamClaw.Skill`): Filesystem-based, stateless. Scans directories for `SKILL.md` files, parses YAML frontmatter (name, description, tools, prompts). No caching GenServer — skills are read at agent init time. Hot-reload is trivial via Config's FileSystem watcher.
+
+**Agent Configuration** (`BeamClaw.Agent`): A configuration resolver, NOT a process. Given an agent ID, loads config, resolves available skills, and returns an `%Agent{}` struct with model, provider, system prompt, tool allowlist.
+
+**Sub-Agent Spawning** (`BeamClaw.Session.SubAgent`): Enforces OpenClaw's 1-level-deep rule. Parent sessions can spawn sub-agents via `DynamicSupervisor.start_child/2`. Sub-agents have `parent_session: parent_pid` set, which blocks further spawning. Parent monitors sub-agents via `Process.monitor/1` and cleans up on `:DOWN`.
+
+**Tool Approval** (`BeamClaw.Tool.Approval`): ETS-backed approval flow. Three ask modes:
+- `:off` — auto-approve all tools
+- `:on_miss` — approve once, remember per-session
+- `:always` — require approval every invocation
+
+Approval requests broadcast via PubSub (`"approval:SESSION_KEY"`). Any client (LiveView, WebSocket, CLI) can respond. 120s timeout with configurable default (approve/deny).
+
+**Tool Registry** (`BeamClaw.Tool.Registry`): Per-session ETS tool registration. Sessions register available tools at init; tool execution checks the registry for permission. Scoped by session key to prevent cross-session tool leakage.
+
+### 4.6 Channels                                                      ✅ Phase 4
 
 **Behaviour:**
 
@@ -411,7 +430,7 @@ end
 | Slack | Slack Elixir | Needs evaluation |
 | WhatsApp | — | May need custom HTTP client |
 
-### 4.6 Cron (Per-Agent Workers)
+### 4.7 Cron (Per-Agent Workers)                                       ✅ Phase 4
 
 One `BeamClaw.Cron.Worker` GenServer per agent, under `BeamClaw.CronSupervisor` (DynamicSupervisor).
 
@@ -658,6 +677,10 @@ OpenClaw is explicitly single-node. BeamClaw's architecture (Registry + PubSub +
 
 **Phase 4: Channel System** — Channel behaviour, Discord adapter (Nostrum), message normalization, session routing.
 
-**Phase 5: Agent Features** — Skill scanner, tool system (exec with security model, browser, web_fetch), cron scheduler, heartbeat runner, sub-agent spawning, background process registry.
+**Phase 5: Agent Features** ✅ — Skill loader (YAML frontmatter), Agent configuration resolver, sub-agent spawning (1-level-deep enforcement), tool approval flow (ask modes + PubSub), tool registry (per-session ETS). Deferred: Tool.Browser (Playwright shim), HeartbeatRunner, ProviderStats.
 
-**Phase 6: Distribution** — Multi-node clustering (libcluster), :pg for distributed registry, agent migration, hot code reload, telemetry + LiveDashboard.
+**Phase 6a: Telemetry & Observability** — `:telemetry` events, LiveDashboard, ProviderStats (ETS), HeartbeatRunner, fault injection tests.
+
+**Phase 6b: Clustering** — `libcluster` for node discovery, `:pg` for distributed registry, distributed PubSub (already supported).
+
+**Phase 6c: Agent Migration & Hot Reload** — Horde for distributed DynamicSupervisor, session state transfer, connection draining, rolling deploys.

@@ -61,26 +61,26 @@ A production-quality reimplementation of OpenClaw on BEAM/OTP, leveraging Erlang
 - Inbound message routing → session → response → outbound
 - Output: Bot responds on Discord
 
-### Phase 5: Agent Features
+### Phase 5: Agent Features ✅
 **Goal:** Skills, tools, and the agent intelligence layer.
-- Skill scanner (parse SKILL.md frontmatter, same as OpenClaw)
-- Tool.Browser (Playwright shim via Erlang Port to Node.js)
-- Tool.SessionSpawn (sub-agent spawning — add `parent_session`, `sub_agents`, `monitors` to Session state)
-- Tool approval flow (ask modes: `:off`, `:on_miss`, `:always` with 120s timeout)
-- Heartbeat runner (periodic health check, presence broadcast via PubSub)
-- Telemetry + LiveDashboard (`:telemetry` events on provider calls, tool execution, session lifecycle)
-- **Note:** Tool.Exec, Tool.WebFetch, and Cron are already complete from Phase 4
-- **Note:** Add fault injection tests (provider 500s, session crash mid-stream, channel disconnect)
-- **Note:** Manual smoke test step — actually run `iex -S mix` and test the LiveView dashboard
-- Team: Skill Engineer, Tool Engineer (browser + session_spawn + approval), Telemetry Engineer
-- Output: A fully functional agent that can run skills, tools, and sub-agents
+- ✅ Skill loader (parse SKILL.md YAML frontmatter)
+- ✅ Agent module (configuration resolver — model, provider, skills, tool allowlist)
+- ✅ Sub-agent spawning (1-level-deep enforcement, Process.monitor cleanup)
+- ✅ Tool approval flow (ask modes: `:off`, `:on_miss`, `:always` with 120s timeout, PubSub coordination)
+- ✅ Tool registry (per-session ETS tool registration and scoping)
+- **Deferred:** Tool.Browser (Playwright shim) — requires Node.js, moved to Phase 7+
+- **Deferred:** HeartbeatRunner, ProviderStats — moved to Phase 6a
+- **Deferred:** Fault injection tests — moved to Phase 6a
+- Team: Single phase (Skill + Agent + SubAgent + Approval + Registry modules)
+- Output: 5 new modules, 79 new tests (210 total), 2,533 lines added
 
-### Phase 6: Distribution & Advanced
+### Phase 6: Observability, Distribution & Advanced
 **Goal:** The things only BEAM can do natively. Split into sub-phases due to scope.
-- **6a: Clustering** — `libcluster` for node discovery, `:pg` for distributed process groups, replace `Registry` lookups with `:pg` where needed
-- **6b: Agent Migration** — Horde for distributed DynamicSupervisor, session state transfer between nodes, connection draining
-- **6c: Hot Code Reload** — skill/config hot-reload without process restart, rolling deploy support
-- Output: Agents running across multiple machines with zero downtime updates
+- **6a: Telemetry & Observability** — `:telemetry` events on provider/tool/session lifecycle, LiveDashboard integration, ProviderStats (ETS), HeartbeatRunner, fault injection tests
+- **6b: Clustering** — `libcluster` for node discovery, `:pg` for distributed process groups, replace `Registry` lookups with `:pg` where needed
+- **6c: Agent Migration & Hot Reload** — Horde for distributed DynamicSupervisor, session state transfer between nodes, connection draining, rolling deploy support
+- Output: Observable, clustered agents running across multiple machines with zero downtime updates
+- See `docs/VISION.md` for the full scaling story beyond Phase 6
 
 ## Development Method
 Each phase is tackled by a Claude Code Agent Team:

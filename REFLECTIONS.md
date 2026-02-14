@@ -134,3 +134,133 @@ This reflection covers all four phases built in a single overnight session (~2.5
 - The key enabler was `PHASE_PROTOCOL.md` — a repeatable checklist that turns phase completion from ad-hoc into a process. This is worth reusing for any multi-phase project.
 - Context window is the real constraint, not capability. Each phase needs a fresh session. Plan accordingly: keep team prompts self-contained with all necessary context (don't assume carryover).
 - **Cost was low:** ~5% of Claude Max weekly limit for 4 phases. This scales to much larger projects.
+
+---
+
+## Phase 5: Agent Features (Reflection Agent, 2026-02-14)
+
+### 1. What Phase 5 Taught Us
+
+**Phase 5 (Agent Features, ~30 min, 5 modules: Skill + Agent + SubAgent + Approval + Registry)**
+
+Phase 5 was the "intelligence layer" — the modules that make BeamClaw an agent platform rather than just a chat proxy. Key learnings:
+
+- **ETS for cross-process coordination works well.** Both `Tool.Approval` and `Tool.Registry` use ETS tables initialized in `application.ex` (owned by the application master, so they outlive any individual GenServer). This is the right pattern for shared mutable state that multiple sessions need to read/write concurrently without a GenServer bottleneck. The Staff Engineer review caught that `Tool.Registry` needed concurrent read access tests — good validation of the review protocol.
+
+- **Sub-agent depth enforcement is simple but critical.** `Session.SubAgent` enforces the 1-level-deep rule from OpenClaw. The implementation is clean: check `parent_session != nil` before allowing spawn. Process monitoring via `Process.monitor/1` handles cleanup when sub-agents crash. This is a textbook "let it crash" pattern — no defensive error handling needed because the supervisor and monitors handle everything.
+
+- **Skill loading is filesystem-based and stateless — correct tradeoff.** `BeamClaw.Skill` parses YAML frontmatter from SKILL.md files on demand, no caching GenServer needed. Skills are read infrequently (agent init) and the filesystem is the source of truth. Adding a watcher for hot-reload later is trivial because there's no cache to invalidate.
+
+- **Tool.Approval using PubSub for request/response is elegant.** The approval flow broadcasts `{:approval_request, ...}` via PubSub and waits for `{:approval_response, ...}` with a 120s timeout. Any connected client (LiveView, WebSocket, CLI) can respond. This decouples the approval UI from the tool execution path — a clear BEAM advantage over OpenClaw's callback-based approach.
+
+- **The Agent module is thin by design.** `BeamClaw.Agent` is essentially a configuration resolver: given an agent ID, it loads config, resolves skills, and returns a struct. It does NOT own a process — sessions are the unit of execution. This avoids the "god object" anti-pattern that plagues agent frameworks.
+
+- **Lead extended-thinking stalls are a real problem.** The lead agent got stuck in 10-12 minute thinking loops twice during Phase 5 (noted in DECISIONS.md). This wastes time and context window. Future prompts should include: "Do not think for more than 2 minutes on any single decision. If stuck, make a pragmatic choice and document the tradeoff."
+
+### 2. Changes Needed to PLAN.md for Phase 6
+
+**Phase 6 scope is still too large.** The current plan lists clustering, agent migration, and hot code reload as one phase. The Phase 1-4 reflection already recommended splitting this. With Phase 5 complete, here's the refined breakdown:
+
+**Phase 6a: Telemetry & Observability**
+- `:telemetry` events on provider calls, tool execution, session lifecycle
+- LiveDashboard integration (already have Phoenix — just add the dependency)
+- ProviderStats GenServer (ETS-backed usage tracking — designed in architecture.md but not built)
+- HeartbeatRunner (periodic health check, presence broadcasting)
+- This is low-risk, high-value, and should take ~20 min with a 2-agent team
+
+**Phase 6b: Clustering & Distribution**
+- `libcluster` for node discovery (Gossip strategy for dev, Kubernetes for prod)
+- `:pg` (process groups) for distributed session/channel discovery
+- Replace `Registry` lookups with `:pg` for cross-node resolution
+- PubSub already distributed via Phoenix.PubSub — just needs node connections
+- This is medium-risk; the main challenge is testing multi-node in CI
+
+**Phase 6c: Agent Migration & Hot Reload**
+- Horde for distributed DynamicSupervisor (session handoff between nodes)
+- Session state serialization/deserialization for migration
+- Connection draining (graceful node shutdown)
+- Hot code reload for skills/config without process restart (partially done — Config already watches filesystem)
+- This is high-risk and may need to be deferred to Phase 7
+
+**Phase 5 items NOT completed (defer or drop):**
+- `Tool.Browser` (Playwright shim) — intentionally deferred. Requires Node.js dependency and Erlang Port management. Not needed for core agent functionality. Recommend Phase 7 or community contribution.
+- `HeartbeatRunner` — designed in architecture.md, not implemented. Move to Phase 6a.
+- `ProviderStats` — designed, not implemented. Move to Phase 6a.
+- `NodeRegistry` (device pairing/auth) — designed, not implemented. Move to Phase 6b.
+- Fault injection tests — recommended in Phase 1-4 reflection, not done. Add to Phase 6a alongside telemetry.
+
+### 3. Prompting Improvements
+
+**New anti-patterns discovered in Phase 5:**
+
+1. **"Do NOT initialize ETS tables inside GenServer.init/1 if the table needs to outlive the GenServer."** Phase 5 correctly placed `Tool.Approval.init()` and `Tool.Registry.init()` in `application.ex`, but this pattern should be called out explicitly in prompts — it's a common Elixir mistake.
+
+2. **"Include max thinking time in lead prompts."** The lead agent's extended thinking stalls (10-12 min) are pure waste. Add: "If you are thinking for more than 2 minutes, stop thinking and make a decision. Document tradeoffs in DECISIONS.md."
+
+3. **"Specify test count expectations."** Phase 5 produced 79 new tests (207 total). Phase 4 produced 99 new tests. Setting a floor ("each module should have at least 10 tests covering happy path, error cases, and edge cases") prevents undertesting.
+
+**Prompts that worked well (keep):**
+- "Run `mix compile --warnings-as-errors` before marking done" — caught real issues
+- "Write unit tests for every public function" — enforced by agents consistently since Phase 4
+- Exact file paths in prompts — zero merge conflicts across all 5 phases
+- "Done criteria" checklist — every agent knew when they were actually done
+
+**Structural prompt improvement:**
+- **Add a "do NOT implement" list.** Phase 5 could have scope-crept into HeartbeatRunner, ProviderStats, or Tool.Browser. Explicitly listing what's out of scope prevents agents from gold-plating.
+
+### 4. Architecture.md Updates Needed
+
+**Section 3 (Supervision Tree):**
+- `ProviderStats`, `NodeRegistry`, `HeartbeatRunner` are still marked ⏳ Phase 5 — update to ⏳ Phase 6a/6b
+- Add note: ETS tables for `Tool.Approval` and `Tool.Registry` are initialized in `application.ex`, not in the supervision tree
+- Application startup now includes `BeamClaw.Tool.Approval.init()` and `BeamClaw.Tool.Registry.init()` before supervisor starts
+
+**Section 4.2 (Sessions) — update for sub-agents:**
+- Session GenServer now has `sub_agents`, `monitors`, and `parent_session` fields (added in Phase 5)
+- `BeamClaw.Session.SubAgent` module handles spawning, monitoring, and depth enforcement
+- Sub-agent cleanup happens via `Process.monitor/1` + `handle_info({:DOWN, ...})`
+
+**New Section: 4.7 Agent Intelligence Layer (Phase 5)**
+- `BeamClaw.Skill` — filesystem-based skill loading, YAML frontmatter parsing
+- `BeamClaw.Agent` — agent configuration resolver (not a process)
+- `BeamClaw.Tool.Approval` — ETS-backed approval flow with PubSub coordination
+- `BeamClaw.Tool.Registry` — per-session ETS tool registration with scoping
+
+**Section 13 (Implementation Roadmap):**
+- Phase 5 description should reflect what was actually built vs. what was deferred
+- Phase 6 should be split into 6a/6b/6c as described above
+
+### 5. Meta-Observations: The Full 5-Phase Overnight Build
+
+**By the numbers:**
+- 5 phases, ~3 hours total wall time
+- 42 source files (`.ex`), 23 test files
+- 210 tests, 0 failures
+- ~10,500 lines of Elixir (source + tests)
+- 10 git commits (5 phase commits + 3 staff reviews + 1 reflection + 1 initial)
+- Cost: estimated ~8-10% of Claude Max weekly limit
+
+**The architecture-first approach was the single most important decision.**
+Phase 1's 656-line architecture.md eliminated almost all design decisions from Phases 2-5. Agents didn't debate "should we use GenServer or Agent?" — the blueprint said GenServer, so they implemented GenServer. This is the #1 recommendation for any multi-phase autonomous build: spend 20% of your time on architecture, and the remaining 80% is mostly mechanical.
+
+**The reflection loop compound-improved quality across phases.**
+- Phase 3 reflection: "agents should write their own tests" → Phase 4: 99 tests (3x improvement)
+- Phase 3 reflection: "add integration tests" → Phase 4: `integration_test.exs` with full flow coverage
+- Phase 1-4 reflection: "add Staff Engineer review" → Phase 5: Staff review caught `Tool.Registry` concurrency gap
+- Each phase was measurably better than the last. This is the key argument for explicit reflection steps between phases.
+
+**The BEAM choice validated itself progressively:**
+- Phase 2: Process mailbox as message queue (no external dependency)
+- Phase 3: Phoenix PubSub for event broadcasting (trivial)
+- Phase 4: DynamicSupervisor for channels/cron (automatic restart on crash)
+- Phase 5: ETS for shared state, Process.monitor for sub-agent lifecycle
+- Each phase leveraged a different BEAM primitive naturally. The platform fit is real, not theoretical.
+
+**What the full build revealed about agent team scaling:**
+- **3 agents per phase is the sweet spot.** Enough parallelism to matter, few enough to avoid coordination overhead.
+- **The lead agent is the bottleneck.** Lead runs integration tests, fixes cross-module issues, writes the commit. This serialized work is ~30% of each phase's time. Consider a "test runner" agent that works in parallel with the lead on integration.
+- **Context window management is the hardest constraint.** Each phase needs a fresh session. The lead must include all necessary context in prompts — no assuming carryover. This makes prompt quality critically important.
+- **Staff Engineer review as a separate session is worth the cost.** Fresh eyes catch what fatigued eyes miss. The 5-10 minute investment per phase prevented bugs from compounding across phases.
+
+**What's left for Phase 6+ and beyond:**
+BeamClaw is now a complete single-node agent orchestration platform: config loading, multi-provider LLM integration, session management, channel adapters, tool execution, cron scheduling, skill loading, sub-agent spawning, and tool approval. The "why BEAM" story is proven for single-node. Phase 6 is where BEAM's distribution story turns from theoretical advantage to practical differentiator — clustering, agent migration, and hot code reload are things that simply cannot be done in Node.js without fundamental re-architecture. See `docs/VISION.md` for the full scaling vision.
