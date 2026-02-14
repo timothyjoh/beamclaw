@@ -1,6 +1,6 @@
 # BeamClaw Architecture — BEAM/OTP Technical Blueprint
 
-**Status:** FINAL — Phase 1 deliverable
+**Status:** LIVING DOCUMENT — Phase 1 origin, updated through Phase 4
 **Date:** 2026-02-14
 **Authors:** Phase 1 Agent Team (Researcher, Architect, Devil's Advocate, Team Lead)
 
@@ -78,14 +78,11 @@ BeamClaw.Application (Supervisor, strategy: :one_for_one)
 ├── BeamClaw.Registry (Registry, keys: :unique)
 │   Process lookup: {:session, id}, {:channel, id}, {:cron, agent_id}
 │
-├── Phoenix.PubSub (BeamClaw.PubSub)
-│   Event broadcasting: "events:global", "session:{id}", "agent:{id}"
-│
 ├── Finch (BeamClaw.Finch)
 │   HTTP/2 connection pools for LLM provider APIs
 │
-├── BeamClaw.ProviderStats (GenServer)
-│   ETS table owner for usage tracking (requests, tokens, cost per provider/day)
+├── Phoenix.PubSub (BeamClaw.PubSub)
+│   Event broadcasting: "events:global", "session:{id}", "agent:{id}"
 │
 ├── BeamClaw.Config (GenServer)
 │   ├── Loads/validates YAML config at startup
@@ -93,10 +90,7 @@ BeamClaw.Application (Supervisor, strategy: :one_for_one)
 │       Hot-reloadable: timeouts, feature flags, cron, channel settings
 │       Requires restart: API keys, provider URLs, bind mode, TLS
 │
-├── BeamClaw.NodeRegistry (GenServer)
-│   Device pairing, authentication, presence tracking
-│
-├── BeamClaw.BackgroundProcessRegistry (GenServer)
+├── BeamClaw.BackgroundProcessRegistry (GenServer)                    ✅ Phase 4
 │   Tracks long-running exec processes (yield after 10s, tail output, kill)
 │
 ├── BeamClaw.ToolSupervisor (Task.Supervisor)
@@ -105,24 +99,35 @@ BeamClaw.Application (Supervisor, strategy: :one_for_one)
 ├── BeamClaw.SessionSupervisor (DynamicSupervisor)
 │   Session GenServers (:transient — restart on abnormal exit)
 │
-├── BeamClaw.ChannelSupervisor (DynamicSupervisor)
+├── BeamClaw.ChannelSupervisor (DynamicSupervisor)                   ✅ Phase 4
 │   Channel GenServers (:transient — restart on crash for reconnection)
 │
-├── BeamClaw.CronSupervisor (DynamicSupervisor)
+├── BeamClaw.CronSupervisor (DynamicSupervisor)                      ✅ Phase 4
 │   Per-agent Cron.Worker GenServers (:transient)
 │
-├── BeamClaw.HeartbeatRunner (GenServer)
+├── BeamClaw.ProviderStats (GenServer)                                ⏳ Phase 5
+│   ETS table owner for usage tracking (requests, tokens, cost per provider/day)
+│
+├── BeamClaw.NodeRegistry (GenServer)                                 ⏳ Phase 5
+│   Device pairing, authentication, presence tracking
+│
+├── BeamClaw.HeartbeatRunner (GenServer)                              ⏳ Phase 5
 │   Periodic health checks, presence broadcasting
 │
-└── BeamClaw.Gateway.Endpoint (Phoenix.Endpoint)
-    ├── Cowboy HTTP server (port 8080)
-    │   ├── /v1/chat/completions (OpenAI-compatible REST)
-    │   ├── /v1/responses (OpenResponses API)
-    │   └── /health
+└── BeamClaw.Gateway.Endpoint (Phoenix.Endpoint)                     ✅ Phase 3
+    ├── Bandit HTTP server (port 4000)
+    │   ├── /v1/chat/completions (OpenAI-compatible REST, streaming SSE)
+    │   ├── /health
+    │   └── / (LiveView dashboard — session management + chat)
     └── WebSocket at /ws
         └── BeamClaw.Gateway.RPCChannel (Phoenix.Channel)
             Custom JSON-RPC protocol: hello → request/response → events
 ```
+
+> **Implementation note (Phase 4):** The actual startup order in `application.ex` is:
+> Registry → Finch → PubSub → Config → BackgroundProcessRegistry → ToolSupervisor →
+> SessionSupervisor → ChannelSupervisor → CronSupervisor → Endpoint.
+> Items marked ⏳ are designed but not yet implemented.
 
 **Shutdown ordering** (reverse startup): Gateway → Heartbeat → Cron → Channels → Sessions → Tools → BackgroundProcessRegistry → NodeRegistry → Config → Finch → PubSub → Registry. Mirrors OpenClaw's orderly shutdown.
 
@@ -183,7 +188,9 @@ end
 
 ### 4.2 Sessions
 
-**Key insight:** Sessions are lightweight metadata holders. Message history lives in the agent runtime process, not the session store.
+**Key insight (original design):** Sessions are lightweight metadata holders. Message history lives in the agent runtime process, not the session store.
+
+> **Implementation note (Phase 2):** The actual Session GenServer holds `messages: []` (full message history) in its state for simplicity. This is the right tradeoff for single-node Phases 2–5. Message history offloading (to ETS, SQLite, or Postgres) is a Phase 6 concern when state size or distribution becomes relevant. The Session state struct also does not yet include `sub_agents`, `monitors`, or `parent_session` — these will be added in Phase 5 with Tool.SessionSpawn.
 
 **State:**
 

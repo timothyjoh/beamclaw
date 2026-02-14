@@ -62,20 +62,24 @@ A production-quality reimplementation of OpenClaw on BEAM/OTP, leveraging Erlang
 - Output: Bot responds on Discord
 
 ### Phase 5: Agent Features
-**Goal:** Skills, tools, cron, heartbeats — the agent intelligence layer.
+**Goal:** Skills, tools, and the agent intelligence layer.
 - Skill scanner (parse SKILL.md frontmatter, same as OpenClaw)
-- Tool system (exec, browser, web_fetch, etc.)
-- Cron scheduler (at/every/cron expressions)
-- Heartbeat runner
-- Sub-agent spawning (extracting into that BEAM sweet spot)
-- Output: A fully functional agent that can run skills and tools
+- Tool.Browser (Playwright shim via Erlang Port to Node.js)
+- Tool.SessionSpawn (sub-agent spawning — add `parent_session`, `sub_agents`, `monitors` to Session state)
+- Tool approval flow (ask modes: `:off`, `:on_miss`, `:always` with 120s timeout)
+- Heartbeat runner (periodic health check, presence broadcast via PubSub)
+- Telemetry + LiveDashboard (`:telemetry` events on provider calls, tool execution, session lifecycle)
+- **Note:** Tool.Exec, Tool.WebFetch, and Cron are already complete from Phase 4
+- **Note:** Add fault injection tests (provider 500s, session crash mid-stream, channel disconnect)
+- **Note:** Manual smoke test step — actually run `iex -S mix` and test the LiveView dashboard
+- Team: Skill Engineer, Tool Engineer (browser + session_spawn + approval), Telemetry Engineer
+- Output: A fully functional agent that can run skills, tools, and sub-agents
 
 ### Phase 6: Distribution & Advanced
-**Goal:** The things only BEAM can do natively.
-- Multi-node clustering (`libcluster`)
-- Agent migration between nodes
-- Hot code reloading for skills/config
-- Telemetry & observability (`:telemetry` + LiveDashboard)
+**Goal:** The things only BEAM can do natively. Split into sub-phases due to scope.
+- **6a: Clustering** — `libcluster` for node discovery, `:pg` for distributed process groups, replace `Registry` lookups with `:pg` where needed
+- **6b: Agent Migration** — Horde for distributed DynamicSupervisor, session state transfer between nodes, connection draining
+- **6c: Hot Code Reload** — skill/config hot-reload without process restart, rolling deploy support
 - Output: Agents running across multiple machines with zero downtime updates
 
 ## Development Method
