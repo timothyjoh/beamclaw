@@ -1,0 +1,126 @@
+      1488
+      1489  ---
+      1490
+      1491 -## Open Questions / TBD
+      1491 +## Questions Answered (from Researcher Findings)
+      1492
+      1493 -**Awaiting Researcher findings:**
+      1493 +**Session Lifecycle:**
+      1494 +- ✅ **No automatic timeouts** for regular sessions (persist forever)
+      1495 +- ✅ Cron-run sessions cleanup after 24 hours (configurable)
+      1496 +- ✅ Session JSONL stores metadata (not full message history)
+      1497 +- ✅ Persistence is atomic: temp file + rename (not append-per-message)
+      1498
+      1495 -1. **Session Lifecycle:** Does OpenClaw have session timeouts? How are idle sessions cleaned up?
+      1496 -2. **Sub-Agent Limits:** Are there limits on recursive sub-agent spawning? How deep can it go?
+      1497 -3. **Tool Isolation:** Does OpenClaw use sandboxing for exec tools? Should we use Docker/Firecracker?
+      1498 -4. **Provider Fallback:** Does OpenClaw fall back to secondary providers on failure?
+      1499 -5. **Channel Reconnection:** How does OpenClaw handle Discord/Telegram reconnection? Exponential backoff?
+      1500 -6. **Cron Persistence:** Are cron jobs persisted across restarts? Where?
+      1501 -7. **Gateway Authentication:** What auth mechanisms does OpenClaw use? API keys, OAuth, device auth?
+      1499 +**Sub-Agent Limits:**
+      1500 +- ✅ **Maximum depth: 1 level** (parent → child only, NO recursion)
+      1501 +- ✅ Sub-agents cannot spawn sub-agents (explicitly blocked)
+      1502 +- ✅ Parent controls allowlist of which agent IDs can spawn
+      1503
+      1503 -**For Devil's Advocate to challenge:**
+      1504 +**Tool Isolation:**
+      1505 +- ✅ **Three security modes:** sandbox (Docker), gateway (host with env restrictions), node (remote)
+      1506 +- ✅ Dangerous env var blocklist: `LD_PRELOAD`, `NODE_OPTIONS`, `PATH`, etc.
+      1507 +- ✅ PTY support via Erlang ports for interactive shells
+      1508 +- ✅ Background processes tracked in registry after 10s yield timeout
+      1509 +- ✅ SIGTERM → SIGKILL escalation for kills
+      1510
+      1505 -1. **Registry Choice:** Why `Registry` + `:pg` over `:global` or `Horde`?
+      1506 -2. **JSONL vs Database:** Is JSONL scalable for high-volume sessions? What about search/analytics?
+      1507 -3. **Tool Supervision:** Should tools be supervised more strictly (e.g., restart on crash)?
+      1508 -4. **Circuit Breaker Tuning:** What thresholds for circuit breaker? 5 failures in 60 seconds?
+      1509 -5. **Config Hot-Reload:** Is hot-reload safe? Could cause inconsistent state during updates?
+      1511 +**Provider Fallback:**
+      1512 +- ✅ Model fallback chain on rate limits/errors
+      1513 +- ✅ Model catalog with allowlists per agent
+      1514 +- ✅ Streaming via SSE (Server-Sent Events)
+      1515
+      1516 +**Channel Reconnection:**
+      1517 +- ✅ Per-channel reconnection logic (implementation varies)
+      1518 +- ✅ Channels are `:transient` supervised (auto-restart on crash)
+      1519 +
+      1520 +**Cron Persistence:**
+      1521 +- ✅ Per-agent JSONL files: `~/.config/openclaw/cron/{agentId}.cron.jsonl`
+      1522 +- ✅ Atomic writes (temp + rename)
+      1523 +- ✅ On restart: recompute schedules, potentially catchup missed runs
+      1524 +- ✅ Stuck run detection (2hr threshold)
+      1525 +- ✅ Auto-disable after 3 consecutive errors
+      1526 +
+      1527 +**Gateway Authentication:**
+      1528 +- ✅ Device pairing with pairing codes (6-digit, time-limited)
+      1529 +- ✅ `deviceId` + `sessionKey` authentication on WebSocket connect
+      1530 +- ✅ NodeRegistry tracks authenticated devices
+      1531 +
+      1532 +## Remaining Design Decisions
+      1533 +
+      1534 +**1. Provider HTTP Client Library:**
+      1535 +- No official Elixir SDKs from Anthropic/OpenAI
+      1536 +- **Decision:** Use `Req` or `Finch` directly for HTTP
+      1537 +- Implement SSE parsing manually or use `EventsourceEx`
+      1538 +
+      1539 +**2. Cron Expression Parser:**
+      1540 +- **Decision:** Use `crontab` hex package for parsing cron expressions
+      1541 +- Supports: `at` (DateTime), `every` (interval), `cron` (classic syntax)
+      1542 +
+      1543 +**3. PTY Implementation:**
+      1544 +- **Decision:** Use Erlang `:os.cmd/2` with `:pty` option or `ExPty` hex package
+      1545 +- Fallback to regular ports if PTY not needed
+      1546 +
+      1547 +**4. Session Message History Storage:**
+      1548 +- JSONL stores session metadata, but where does full message history live?
+      1549 +- **Open Question:** Likely in agent runtime process (in-memory), not persisted separately
+      1550 +- **Decision:** Store in Session GenServer state, optionally backed by ETS for large histories
+      1551 +
+      1552 +**5. Distributed Coordination:**
+      1553 +- **Decision:** Use `:pg` for distributed session discovery (multi-node)
+      1554 +- Registry for local fast lookups
+      1555 +- Future: Consider Horde for distributed DynamicSupervisor if agent migration needed
+      1556 +
+      1557  ---
+      1558
+      1559  ## Next Steps
+      1560
+      1515 -1. **Wait for Researcher:** Detailed analysis of OpenClaw subsystems
+      1516 -2. **Collaborate with Devil's Advocate:** Address challenges, refine designs
+      1517 -3. **Finalize Architecture:** Resolve open questions, finalize supervision tree
+      1518 -4. **Prepare for Phase 2:** Module structure, mix project scaffolding
+      1561 +1. ✅ **Research Complete** — All OpenClaw subsystems analyzed
+      1562 +2. ✅ **Architecture Revised** — Major design issues addressed
+      1563 +3. ⏳ **Final Review** — Awaiting Devil's Advocate final critique
+      1564 +4. → **Synthesize Final Doc** — Team lead to merge findings
+      1565 +5. → **Prepare for Phase 2** — Module structure, mix project scaffolding
+      1566
+      1567  ---
+      1568
+      1522 -**Document Status:** DRAFT — In progress, awaiting research findings and peer review
+      1569 +**Document Status:** REVISED — Major architecture updated based on research findings. Ready for final review.
+
+⏺ Update(docs/architecture.md)
+  ⎿  Added 3 lines, removed 2 lines
+      1  # BeamClaw Architecture — BEAM/OTP Design
+      2
+      3 -**Status:** DRAFT — Architecture design in progress
+      3 +**Status:** REVISED — Major architecture updated based on research findings
+      4  **Author:** Architect (Claude Code Agent Team, Phase 1)
+      5 -**Date:** 2026-02-13
+      5 +**Date:** 2026-02-13 (Initial), 2026-02-14 (Revised)
+      6 +**Revision:** 2.0 — Addressed critical design issues, incorporated full subsystem analysis
+      7
+      8  ## Overview
+      9
+
+⏺ Excellent! Major revision complete. Let me notify the team and mark my task as completed:
+
+✻ Cascading… (5m 49s · ↓ 16.0k tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── @architect ──
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt
+

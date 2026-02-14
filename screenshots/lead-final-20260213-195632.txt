@@ -1,0 +1,266 @@
+      1374 -# Store metadata
+      1375 -:ets.insert(:session_metadata, {session_id, %{last_activity: DateTime.utc_now()}})
+      1376 -
+      1377 -# Lookup
+      1378 -:ets.lookup(:session_metadata, session_id)
+       621 +# View entire process tree
+       622 +:observer.start()
+       623  ```
+       624
+      1381 -### Future: Mnesia for Distributed State
+       625 +OpenClaw has limited runtime introspection. BEAM's Observer, tracing, and `:sys` module provide unmatched operational visibility.
+       626
+      1383 -**When to use:**
+      1384 -- Multi-node clusters
+      1385 -- Agent migration between nodes
+      1386 -- Distributed cron scheduling
+       627 +### Distribution-Ready
+       628
+      1388 -**Not for:**
+      1389 -- Message history (JSONL is fine)
+      1390 -- High-volume writes (Mnesia is slower than ETS)
+       629 +OpenClaw is explicitly single-node. BeamClaw's architecture (Registry + PubSub + DynamicSupervisors) is ready for multi-node clustering via `libcluster` in Phase 6. Agent migration between nodes becomes possible — move a running session from Node A to Node B without dropping connections.
+       630
+       631  ---
+       632
+      1394 -## 8. Configuration Management
+       633 +## 12. Open Decisions for Phase 2
+       634
+      1396 -### Config Sources
+       635 +| Decision | Options | Recommendation |
+       636 +|----------|---------|----------------|
+       637 +| Gateway protocol | Replicate OpenClaw's custom protocol vs Phoenix Channels native | Start with Phoenix Channels. Add compatibility adapter later if needed. |
+       638 +| Provider HTTP library | Req vs Finch directly | Finch for streaming (SSE), Req for simple requests. Both use Finch under the hood. |
+       639 +| Cron expression parser | `crontab` hex vs custom | `crontab` hex package — mature, well-tested. |
+       640 +| PTY library | Erlang ports (:pty) vs ExPty vs MuonTrap | Start with Erlang ports. Evaluate MuonTrap if signal handling is problematic. |
+       641 +| Config format | YAML vs TOML vs Elixir terms | YAML for compatibility with OpenClaw's config format. Use `yaml_elixir` hex. |
+       642 +| Message history storage | In-memory only vs ETS-backed vs SQLite | In-memory for Phase 2. Evaluate persistence needs in Phase 5. |
+       643
+      1398 -1. **Application Config** (`config/config.exs`, `config/runtime.exs`)
+      1399 -   - Static config (supervision tree, etc.)
+      1400 -   - Environment-specific (dev, test, prod)
+      1401 -
+      1402 -2. **Runtime Config** (YAML/JSON loaded at startup)
+      1403 -   - LLM API keys, provider settings
+      1404 -   - Channel credentials (Discord bot token, etc.)
+      1405 -   - User preferences, skill settings
+      1406 -
+      1407 -3. **Hot-Reload** (File watcher)
+      1408 -   - Watch config file for changes
+      1409 -   - Reload without restarting application
+      1410 -   - Broadcast config updates to GenServers
+      1411 -
+      1412 -### Config Structure
+      1413 -
+      1414 -**Example `config.yaml`:**
+      1415 -```yaml
+      1416 -providers:
+      1417 -  anthropic:
+      1418 -    api_key: "sk-..."
+      1419 -    base_url: "https://api.anthropic.com"
+      1420 -    models: ["claude-4.5-sonnet", "claude-opus-4.6"]
+      1421 -  openai:
+      1422 -    api_key: "sk-..."
+      1423 -    base_url: "https://api.openai.com"
+      1424 -
+      1425 -channels:
+      1426 -  discord:
+      1427 -    enabled: true
+      1428 -    token: "..."
+      1429 -  telegram:
+      1430 -    enabled: false
+      1431 -
+      1432 -sessions:
+      1433 -  idle_timeout_minutes: 30
+      1434 -  max_sub_agents: 5
+      1435 -
+      1436 -cron:
+      1437 -  enabled: true
+      1438 -
+      1439 -tools:
+      1440 -  exec:
+      1441 -    enabled: true
+      1442 -    timeout: 120000  # 2 minutes
+      1443 -  browser:
+      1444 -    enabled: true
+      1445 -    timeout: 300000  # 5 minutes
+      1446 -```
+      1447 -
+      1448 -### Config Validation
+      1449 -
+      1450 -**Schema Validation:**
+      1451 -- Use `ExJsonSchema` or custom validation
+      1452 -- Validate on load
+      1453 -- Fail fast if config invalid
+      1454 -
+      1455 -```elixir
+      1456 -defmodule BeamClaw.Config.Validator do
+      1457 -  def validate(config) do
+      1458 -    # Check required keys, types, etc.
+      1459 -    # Return {:ok, config} or {:error, reason}
+      1460 -  end
+      1461 -end
+      1462 -```
+      1463 -
+      1464 -### Hot-Reload Implementation
+      1465 -
+      1466 -```elixir
+      1467 -defmodule BeamClaw.Config do
+      1468 -  use GenServer
+      1469 -
+      1470 -  def init(config_path) do
+      1471 -    {:ok, watcher_pid} = FileSystem.start_link(dirs: [Path.dirname(config_path)])
+      1472 -    FileSystem.subscribe(watcher_pid)
+      1473 -
+      1474 -    {:ok, config} = load_and_validate(config_path)
+      1475 -    {:ok, %{config: config, path: config_path, watcher: watcher_pid}}
+      1476 -  end
+      1477 -
+      1478 -  def handle_info({:file_event, _watcher, {path, _events}}, state) do
+      1479 -    if path == state.path do
+      1480 -      {:ok, new_config} = load_and_validate(path)
+      1481 -      broadcast_config_update(new_config)
+      1482 -      {:noreply, %{state | config: new_config}}
+      1483 -    else
+      1484 -      {:noreply, state}
+      1485 -    end
+      1486 -  end
+      1487 -end
+      1488 -```
+      1489 -
+       644  ---
+       645
+      1492 -## Questions Answered (from Researcher Findings)
+       646 +## 13. Implementation Roadmap
+       647
+      1494 -**Session Lifecycle:**
+      1495 -- ✅ **No automatic timeouts** for regular sessions (persist forever)
+      1496 -- ✅ Cron-run sessions cleanup after 24 hours (configurable)
+      1497 -- ✅ Session JSONL stores metadata (not full message history)
+      1498 -- ✅ Persistence is atomic: temp file + rename (not append-per-message)
+       648 +**Phase 2: Core Runtime** — Mix project, Application supervisor, Config loading, Session GenServer, JSONL persistence, basic Anthropic provider (Finch + SSE).
+       649
+      1500 -**Sub-Agent Limits:**
+      1501 -- ✅ **Maximum depth: 1 level** (parent → child only, NO recursion)
+      1502 -- ✅ Sub-agents cannot spawn sub-agents (explicitly blocked)
+      1503 -- ✅ Parent controls allowlist of which agent IDs can spawn
+       650 +**Phase 3: Gateway & API** — Phoenix Endpoint, RPCChannel, WebSocket protocol, OpenAI-compatible REST endpoints, NodeRegistry + auth.
+       651
+      1505 -**Tool Isolation:**
+      1506 -- ✅ **Three security modes:** sandbox (Docker), gateway (host with env restrictions), node (remote)
+      1507 -- ✅ Dangerous env var blocklist: `LD_PRELOAD`, `NODE_OPTIONS`, `PATH`, etc.
+      1508 -- ✅ PTY support via Erlang ports for interactive shells
+      1509 -- ✅ Background processes tracked in registry after 10s yield timeout
+      1510 -- ✅ SIGTERM → SIGKILL escalation for kills
+       652 +**Phase 4: Channel System** — Channel behaviour, Discord adapter (Nostrum), message normalization, session routing.
+       653
+      1512 -**Provider Fallback:**
+      1513 -- ✅ Model fallback chain on rate limits/errors
+      1514 -- ✅ Model catalog with allowlists per agent
+      1515 -- ✅ Streaming via SSE (Server-Sent Events)
+       654 +**Phase 5: Agent Features** — Skill scanner, tool system (exec with security model, browser, web_fetch), cron scheduler, heartbeat runner, sub-agent spawning, background process registry.
+       655
+      1517 -**Channel Reconnection:**
+      1518 -- ✅ Per-channel reconnection logic (implementation varies)
+      1519 -- ✅ Channels are `:transient` supervised (auto-restart on crash)
+      1520 -
+      1521 -**Cron Persistence:**
+      1522 -- ✅ Per-agent JSONL files: `~/.config/openclaw/cron/{agentId}.cron.jsonl`
+      1523 -- ✅ Atomic writes (temp + rename)
+      1524 -- ✅ On restart: recompute schedules, potentially catchup missed runs
+      1525 -- ✅ Stuck run detection (2hr threshold)
+      1526 -- ✅ Auto-disable after 3 consecutive errors
+      1527 -
+      1528 -**Gateway Authentication:**
+      1529 -- ✅ Device pairing with pairing codes (6-digit, time-limited)
+      1530 -- ✅ `deviceId` + `sessionKey` authentication on WebSocket connect
+      1531 -- ✅ NodeRegistry tracks authenticated devices
+      1532 -
+      1533 -## Remaining Design Decisions
+      1534 -
+      1535 -**1. Provider HTTP Client Library:**
+      1536 -- No official Elixir SDKs from Anthropic/OpenAI
+      1537 -- **Decision:** Use `Req` or `Finch` directly for HTTP
+      1538 -- Implement SSE parsing manually or use `EventsourceEx`
+      1539 -
+      1540 -**2. Cron Expression Parser:**
+      1541 -- **Decision:** Use `crontab` hex package for parsing cron expressions
+      1542 -- Supports: `at` (DateTime), `every` (interval), `cron` (classic syntax)
+      1543 -
+      1544 -**3. PTY Implementation:**
+      1545 -- **Decision:** Use Erlang `:os.cmd/2` with `:pty` option or `ExPty` hex package
+      1546 -- Fallback to regular ports if PTY not needed
+      1547 -
+      1548 -**4. Session Message History Storage:**
+      1549 -- JSONL stores session metadata, but where does full message history live?
+      1550 -- **Open Question:** Likely in agent runtime process (in-memory), not persisted separately
+      1551 -- **Decision:** Store in Session GenServer state, optionally backed by ETS for large histories
+      1552 -
+      1553 -**5. Distributed Coordination:**
+      1554 -- **Decision:** Use `:pg` for distributed session discovery (multi-node)
+      1555 -- Registry for local fast lookups
+      1556 -- Future: Consider Horde for distributed DynamicSupervisor if agent migration needed
+      1557 -
+      1558 ----
+      1559 -
+      1560 -## Next Steps
+      1561 -
+      1562 -1. ✅ **Research Complete** — All OpenClaw subsystems analyzed
+      1563 -2. ✅ **Architecture Revised** — Major design issues addressed
+      1564 -3. ⏳ **Final Review** — Awaiting Devil's Advocate final critique
+      1565 -4. → **Synthesize Final Doc** — Team lead to merge findings
+      1566 -5. → **Prepare for Phase 2** — Module structure, mix project scaffolding
+      1567 -
+      1568 ----
+      1569 -
+      1570 -**Document Status:** REVISED — Major architecture updated based on research findings. Ready for final review.
+       656 +**Phase 6: Distribution** — Multi-node clustering (libcluster), :pg for distributed registry, agent migration, hot code reload, telemetry + LiveDashboard.
+
+⏺ Teammate @architect shut down gracefully
+
+⏺ Now let me mark Task #4 complete and clean up.
+
+⏺ Now let me clean up the working files the teammates created and shut down the team.
+
+⏺ Bash(rm /Users/timothyjohnson/wrk/beamclaw/DEVILS_ADVOCATE_ANALYSIS.md /Users/timothyjohnson/wrk/beamclaw/CRITIQUE.md)
+  ⎿  Done
+
+⏺ Phase 1 complete. Here's what was delivered:
+
+  docs/architecture.md — 657 lines, 13 sections
+
+  The final blueprint synthesizes work from all three teammates:
+
+  From the Researcher:
+  - Deep analysis of all 7 OpenClaw subsystems (Gateway, Sessions, Agents, Channels, Providers, Tools, Cron)
+  - Critical discoveries: session JSONL stores metadata not messages, sub-agents capped at 1 level, streaming is callback-driven, exec has 3 security modes, cron is per-agent
+
+  From the Architect:
+  - Complete supervision tree (15 processes under Application)
+  - GenServer designs for Session, Channel, Cron.Worker, Config, NodeRegistry, BackgroundProcessRegistry
+  - Stateless provider modules with Finch connection pools (fixed the bottleneck)
+  - Async message flow (fixed the blocking call problem)
+  - Channel and Provider behaviours/contracts
+
+  From the Devil's Advocate:
+  - 4 critical issues found and fixed (blocking calls, provider bottleneck, JSONL model, state explosion)
+  - Ecosystem gap analysis (no official SDKs, browser automation gap, PTY signal differences)
+  - Risk register with mitigations
+  - "Where BEAM Wins" analysis
+
+  Key decisions locked in:
+  - Phoenix for Gateway (WebSocket + PubSub + HTTP)
+  - Registry-only for Phase 2-5, :pg for Phase 6
+  - JSONL with atomic writes for persistence (single-writer guarantee)
+  - MuonTrap or manual signals for tool process management
+  - Shell out to Node.js for browser automation (pragmatic tradeoff)
+
+  Ready for Phase 2: Core Runtime.
+
+✻ Baked for 3m 39s
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ check on the architect's progress
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)                                                                                                                                                                                                                                                  Context left until auto-compact: 11%
+
