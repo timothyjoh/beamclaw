@@ -16,11 +16,17 @@ defmodule BeamClaw.Application do
          "https://api.anthropic.com" => [size: 10, count: 1, protocols: [:http2]]
        }},
 
+      # PubSub for WebSocket broadcasts
+      {Phoenix.PubSub, name: BeamClaw.PubSub},
+
       # Runtime configuration GenServer
       BeamClaw.Config,
 
       # DynamicSupervisor for session GenServers
-      {DynamicSupervisor, name: BeamClaw.SessionSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: BeamClaw.SessionSupervisor, strategy: :one_for_one},
+
+      # Phoenix endpoint (must be last)
+      BeamClaw.Gateway.Endpoint
     ]
 
     opts = [strategy: :one_for_one, name: BeamClaw.Supervisor]
