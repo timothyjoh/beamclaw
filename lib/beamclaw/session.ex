@@ -298,6 +298,13 @@ defmodule BeamClaw.Session do
     {:noreply, state}
   end
 
+  @impl true
+  def terminate(_reason, state) do
+    # Clean up tool registry entries for this session
+    BeamClaw.Tool.Registry.unregister_all(state.session_key)
+    :ok
+  end
+
   # Private Helpers
 
   defp via(session_key) do

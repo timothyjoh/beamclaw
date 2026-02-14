@@ -139,6 +139,37 @@ defmodule BeamClaw.Tool.RegistryTest do
     end
   end
 
+  describe "unregister_all/1" do
+    test "removes all tools for a session", %{session_key: session_key} do
+      Registry.register(session_key, "exec", BeamClaw.Tool.Exec)
+      Registry.register(session_key, "web_fetch", BeamClaw.Tool.WebFetch)
+      Registry.register(session_key, "custom", MyCustomTool)
+
+      assert length(Registry.list_tools(session_key)) == 3
+
+      :ok = Registry.unregister_all(session_key)
+
+      assert Registry.list_tools(session_key) == []
+    end
+
+    test "does not affect other sessions", %{session_key: session_key} do
+      other_key = "test:session:other-#{:erlang.unique_integer([:positive])}"
+
+      Registry.register(session_key, "exec", BeamClaw.Tool.Exec)
+      Registry.register(other_key, "exec", BeamClaw.Tool.Exec)
+
+      Registry.unregister_all(session_key)
+
+      assert Registry.list_tools(session_key) == []
+      assert {:ok, _} = Registry.get_tool(other_key, "exec")
+    end
+
+    test "is idempotent on empty session", %{session_key: session_key} do
+      :ok = Registry.unregister_all(session_key)
+      assert Registry.list_tools(session_key) == []
+    end
+  end
+
   describe "register_defaults/1" do
     test "registers exec and web_fetch tools", %{session_key: session_key} do
       :ok = Registry.register_defaults(session_key)

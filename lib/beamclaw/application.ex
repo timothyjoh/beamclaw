@@ -5,6 +5,11 @@ defmodule BeamClaw.Application do
 
   @impl true
   def start(_type, _args) do
+    # Initialize ETS tables owned by the application master process.
+    # These persist for the lifetime of the application.
+    BeamClaw.Tool.Approval.init()
+    BeamClaw.Tool.Registry.init()
+
     children = [
       # Process registry for {:session, id}, {:channel, id}, {:cron, agent_id}
       {Registry, keys: :unique, name: BeamClaw.Registry},

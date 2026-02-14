@@ -79,5 +79,13 @@
 - **Decision:** Staff Engineer runs as separate CC session (not lead at low context)
 - **Decision:** Agents writing their own tests → much better coverage than lead writing all tests
 
+### 2026-02-13 21:31 EST — Phase 5 COMPLETE
+- Skill loading (YAML frontmatter), Agent definitions, Sub-Agent spawning (1-level deep)
+- Tool Approval (ask modes, 120s timeout, PubSub), Tool Registry (per-session ETS)
+- **207 tests, 0 failures** (79 new), clean compile with --warnings-as-errors
+- 2,533 lines added, 5 new modules, 6 new test files
+- Git commit `159443f`, pushed
+- **Observation:** Lead gets stuck in extended thinking (10-12 min) when running final tests. Escape + nudge needed. Consider adding "do not think for more than 2 minutes" to prompts.
+
 ---
 *Decisions will be appended as they happen throughout the night.*

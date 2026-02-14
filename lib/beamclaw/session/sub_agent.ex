@@ -70,6 +70,13 @@ defmodule BeamClaw.Session.SubAgent do
         {:error, :parent_not_found}
 
       parent_pid ->
+        # Guard: must NOT be called from within the parent Session GenServer,
+        # as the GenServer.call below would deadlock.
+        if parent_pid == self() do
+          raise "SubAgent.spawn/2 must not be called from within the parent Session GenServer. " <>
+                "Use it from a tool task or external caller."
+        end
+
         # Get parent state to check depth limit
         parent_state = GenServer.call(parent_pid, :get_state)
 

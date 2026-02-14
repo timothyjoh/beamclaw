@@ -81,7 +81,7 @@ defmodule BeamClaw.Tool.Registry do
   """
   @spec list_tools(String.t()) :: [map()]
   def list_tools(session_key) do
-    pattern = {{session_key, :"$1"}, :"$2", :"$3"}
+    pattern = {{session_key, :_}, :_, :_}
 
     @table
     |> :ets.match_object(pattern)
@@ -121,6 +121,24 @@ defmodule BeamClaw.Tool.Registry do
       [] ->
         {:error, :not_found}
     end
+  end
+
+  @doc """
+  Unregister all tools for a session.
+
+  Called during session cleanup to prevent ETS entry leaks.
+
+  ## Examples
+
+      iex> unregister_all("agent:default:main")
+      :ok
+  """
+  @spec unregister_all(String.t()) :: :ok
+  def unregister_all(session_key) do
+    # Match all entries where the key tuple starts with this session_key
+    pattern = {{session_key, :_}, :_, :_}
+    :ets.match_delete(@table, pattern)
+    :ok
   end
 
   @doc """
