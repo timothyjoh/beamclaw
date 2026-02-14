@@ -35,7 +35,10 @@ defmodule BeamClaw.Session do
     :caller,
     messages: [],
     metadata: %{},
-    status: :idle
+    status: :idle,
+    parent_session: nil,
+    sub_agents: [],
+    monitors: []
   ]
 
   # Client API
@@ -117,7 +120,10 @@ defmodule BeamClaw.Session do
       session_id: Keyword.get(opts, :session_id, session_id),
       messages: [],
       metadata: %{},
-      status: :idle
+      status: :idle,
+      parent_session: Keyword.get(opts, :parent_session, nil),
+      sub_agents: [],
+      monitors: []
     }
 
     # Load existing messages from JSONL if available
@@ -178,6 +184,26 @@ defmodule BeamClaw.Session do
   end
 
   @impl true
+  def handle_call({:add_sub_agent, run}, _from, state) do
+    # Monitor the child process from this GenServer
+    ref = Process.monitor(run.child_pid)
+
+    state = %{state |
+      sub_agents: [run | state.sub_agents],
+      monitors: [ref | state.monitors]
+    }
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:remove_sub_agent, run_id}, _from, state) do
+    state = %{state |
+      sub_agents: Enum.reject(state.sub_agents, &(&1.run_id == run_id))
+    }
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_info({:stream_event, "content_block_delta", data}, state) do
     # Extract text delta and forward to caller
     text = get_in(data, ["delta", "text"]) || ""
@@ -223,6 +249,49 @@ defmodule BeamClaw.Session do
     {:noreply, state}
   end
 
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+    # Find the sub-agent run matching this monitor ref and pid
+    case Enum.find(state.sub_agents, fn run -> run.child_pid == pid end) do
+      nil ->
+        # Not a sub-agent we're tracking, ignore
+        {:noreply, state}
+
+      run ->
+        # Update the run status based on exit reason
+        # DynamicSupervisor.terminate_child sends :shutdown, not :normal
+        status = case reason do
+          :normal -> :completed
+          :shutdown -> :completed
+          {:shutdown, _} -> :completed
+          _ -> :failed
+        end
+        ended_at = DateTime.utc_now()
+
+        updated_run = %{run |
+          status: status,
+          ended_at: ended_at,
+          outcome: reason
+        }
+
+        # Update sub_agents list
+        updated_sub_agents = Enum.map(state.sub_agents, fn r ->
+          if r.run_id == run.run_id, do: updated_run, else: r
+        end)
+
+        # Remove the monitor ref
+        updated_monitors = Enum.reject(state.monitors, &(&1 == ref))
+
+        state = %{state |
+          sub_agents: updated_sub_agents,
+          monitors: updated_monitors
+        }
+
+        Logger.info("Sub-agent #{run.run_id} exited with reason: #{inspect(reason)}")
+        {:noreply, state}
+    end
+  end
+
   # Catch-all for other stream events we don't handle yet
   @impl true
   def handle_info({:stream_event, _type, _data}, state) do
@@ -238,6 +307,7 @@ defmodule BeamClaw.Session do
   defp parse_session_key(session_key) do
     case String.split(session_key, ":") do
       ["agent", agent_id, session_id] -> {agent_id, session_id}
+      ["agent", agent_id, "subagent", unique_id] -> {agent_id, "subagent:#{unique_id}"}
       _ -> raise ArgumentError, "Invalid session_key format: #{session_key}"
     end
   end
