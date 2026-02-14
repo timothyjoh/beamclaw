@@ -131,12 +131,13 @@ defmodule BeamClaw.Cron.Store do
 
   defp encode_job(job) do
     # Convert atoms to strings for JSON
+    # Use Map.get for boolean fields to avoid || swallowing false
     job_map = %{
       job_id: job[:job_id] || job.job_id,
       type: to_string(job[:type] || job.type),
       schedule: encode_schedule(job[:schedule] || job.schedule),
       prompt: job[:prompt] || job.prompt,
-      enabled: job[:enabled] || job.enabled,
+      enabled: Map.get(job, :enabled, true),
       consecutive_errors: job[:consecutive_errors] || job.consecutive_errors || 0
     }
 

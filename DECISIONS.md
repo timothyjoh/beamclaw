@@ -67,5 +67,17 @@
 - Git commit `d305ff5`, pushed to origin
 - Total Phase 3 time: ~40 minutes
 
+### 2026-02-13 21:00 EST — Phase 4 COMPLETE + Staff Engineer Protocol Added
+- Channel System: behaviour + Discord adapter (Nostrum) + mock adapter
+- Tool System: Exec (env blocklist, background registry, SIGTERM→SIGKILL), WebFetch
+- Cron System: per-agent Worker, JSONL Store, Schedule parsing (at/every/cron), stuck detection
+- **128 tests, 0 failures** (99 new — agents wrote their own tests! Reflection improvement worked!)
+- **3,953 lines added**, 15 new modules
+- Git commit `1b89740`, pushed to origin
+- **New protocol:** Staff Engineer review agent (Opus) after each phase, then Reflection agent
+- Total Phase 4 time: ~45 minutes (longer due to stuck thinking on integration test)
+- **Decision:** Staff Engineer runs as separate CC session (not lead at low context)
+- **Decision:** Agents writing their own tests → much better coverage than lead writing all tests
+
 ---
 *Decisions will be appended as they happen throughout the night.*

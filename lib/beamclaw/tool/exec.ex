@@ -10,7 +10,7 @@ defmodule BeamClaw.Tool.Exec do
   alias BeamClaw.BackgroundProcessRegistry
 
   @blocked_env ~w[LD_PRELOAD LD_LIBRARY_PATH DYLD_INSERT_LIBRARIES NODE_OPTIONS
-                  PYTHONPATH RUBYLIB PERL5LIB]
+                  PYTHONPATH RUBYLIB PERL5LIB PATH HOME USER SHELL]
 
   @yield_timeout 10_000  # 10 seconds
   @max_output 200_000    # 200KB

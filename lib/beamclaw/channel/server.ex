@@ -94,7 +94,9 @@ defmodule BeamClaw.Channel.Server do
         # Send to session and receive streaming response
         case ensure_session_started(session_key) do
           {:ok, _pid} ->
-            # Tag ourselves with correlation_id so we can match responses
+            # TODO: Process dictionary is a poor fit here — concurrent messages
+            # will overwrite the correlation_id. Refactor to track active
+            # correlation_id in the GenServer state instead.
             Process.put(:correlation_id, correlation_id)
             BeamClaw.Session.send_message(session_key, text)
 

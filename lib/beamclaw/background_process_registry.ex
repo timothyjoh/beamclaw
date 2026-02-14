@@ -8,6 +8,9 @@ defmodule BeamClaw.BackgroundProcessRegistry do
   require Logger
 
   @max_output_bytes 200_000
+  # Cleanup exited processes after 1 hour
+  @cleanup_interval_ms 60 * 60 * 1000
+  @exited_ttl_ms 60 * 60 * 1000
 
   defstruct processes: %{}
 
@@ -91,6 +94,7 @@ defmodule BeamClaw.BackgroundProcessRegistry do
 
   @impl true
   def init(state) do
+    schedule_cleanup()
     {:ok, state}
   end
 
@@ -232,5 +236,25 @@ defmodule BeamClaw.BackgroundProcessRegistry do
         # Already exited, nothing to do
         {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_info(:cleanup_exited, state) do
+    now = DateTime.utc_now()
+
+    new_processes =
+      state.processes
+      |> Enum.reject(fn {_slug, entry} ->
+        entry.exit_status != nil &&
+          DateTime.diff(now, entry.backgrounded_at, :millisecond) > @exited_ttl_ms
+      end)
+      |> Map.new()
+
+    schedule_cleanup()
+    {:noreply, %{state | processes: new_processes}}
+  end
+
+  defp schedule_cleanup do
+    Process.send_after(self(), :cleanup_exited, @cleanup_interval_ms)
   end
 end

@@ -68,7 +68,7 @@ defmodule BeamClaw.Tool.ExecTest do
       assert result.output == "\n"
     end
 
-    test "blocks all blocked env vars" do
+    test "blocks all blocked env vars from being overridden" do
       blocked_vars = [
         "LD_PRELOAD",
         "LD_LIBRARY_PATH",
@@ -76,18 +76,22 @@ defmodule BeamClaw.Tool.ExecTest do
         "NODE_OPTIONS",
         "PYTHONPATH",
         "RUBYLIB",
-        "PERL5LIB"
+        "PERL5LIB",
+        "PATH",
+        "HOME",
+        "USER",
+        "SHELL"
       ]
 
       for var <- blocked_vars do
         assert {:ok, result} =
                  Exec.run("printenv #{var} || echo empty",
-                   env: %{var => "/danger"},
+                   env: %{var => "/danger-injected"},
                    security_mode: :gateway
                  )
 
-        # Should output "empty" since the var is blocked
-        assert String.trim(result.output) == "empty"
+        # The injected value should NOT appear — blocked vars are stripped
+        refute String.trim(result.output) == "/danger-injected"
       end
     end
   end
